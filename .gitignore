@@ -17,3 +17,8 @@ coverage.txt
 .idea/
 .vscode/
 *.swp
+/nodecert
+/gateway
+/multibill
+/wallet
+/svidmint
