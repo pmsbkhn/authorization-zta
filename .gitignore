@@ -1,0 +1,19 @@
+# Binaries (anchored to repo root so cmd/pdp/ source is still tracked)
+/bin/
+/dist/
+/pdp
+*.exe
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# OPA
+*.tar.gz
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
