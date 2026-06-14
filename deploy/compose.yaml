@@ -47,9 +47,16 @@ services:
     build: { context: .., dockerfile: deploy/Dockerfile }
     command: ["/app/pdp"]
     hostname: pdp
+    user: "10004:10004"
+    depends_on: [spire-agent]
     environment:
       PDP_ADDR: ":8080"
+      PDP_GRPC_ADDR: ":9090"           # gRPC over mTLS (PEPs authenticate with their SVID)
       PDP_TOKEN_SECRET: "compose-demo-secret"
+      SPIFFE_ENDPOINT_SOCKET: "unix:///run/spire/agent.sock"
+      SVID_TRUST_DOMAIN: "vsp.local"
+    volumes:
+      - wlapi:/run/spire
 
   wallet:
     build: { context: .., dockerfile: deploy/Dockerfile }
@@ -60,6 +67,7 @@ services:
     environment:
       WALLET_ADDR: ":8082"
       PDP_URL: "http://pdp:8080"
+      PDP_GRPC_ADDR: "pdp:9090"        # call PDP over gRPC/mTLS
       PDP_TOKEN_SECRET: "compose-demo-secret"
       SPIFFE_ENDPOINT_SOCKET: "unix:///run/spire/agent.sock"
       SVID_TRUST_DOMAIN: "vsp.local"
@@ -90,6 +98,7 @@ services:
     environment:
       GATEWAY_ADDR: ":8088"
       PDP_URL: "http://pdp:8080"
+      PDP_GRPC_ADDR: "pdp:9090"        # call PDP over gRPC/mTLS
       MULTIBILL_URL: "https://multibill:8081"
       SPIFFE_ENDPOINT_SOCKET: "unix:///run/spire/agent.sock"
       SVID_TRUST_DOMAIN: "vsp.local"

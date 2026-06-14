@@ -19,6 +19,7 @@ import (
 // GatewayConfig configures the Edge PEP / API Gateway.
 type GatewayConfig struct {
 	PDPURL      string
+	PDP         pep.PDP     // optional transport override (e.g. gRPC-over-mTLS); default HTTP
 	UpstreamURL string      // Multi-Bill
 	UpstreamTLS *tls.Config // when set, the gateway calls Multi-Bill over mTLS
 	Logger      *slog.Logger
@@ -64,10 +65,14 @@ func GatewayHandler(cfg GatewayConfig) (http.Handler, error) {
 		return nil
 	}
 
+	pdpClient := cfg.PDP
+	if pdpClient == nil {
+		pdpClient = pdpclient.New(cfg.PDPURL)
+	}
 	guard := pep.New(pep.Config{
 		Profile: authzen.ProfileEdge,
 		PEPID:   "edge-api-gateway",
-		PDP:     pdpclient.New(cfg.PDPURL),
+		PDP:     pdpClient,
 		Logger:  log,
 		Routes: []pep.Route{{
 			Method:        http.MethodPost,

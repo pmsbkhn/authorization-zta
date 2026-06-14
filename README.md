@@ -163,7 +163,21 @@ Nâng SPIRE từ demo-grade lên production: bỏ `join_token`/`insecure_bootstr
 
 `run.sh` giờ đơn giản hơn hẳn: sinh PKI → server → agent (tự attest) → entries → workloads (hết màn xoay token).
 
-> **Mock vs thật (sau M8):** OPA, mTLS+SVID, **SPIRE production (x509pop + UpstreamAuthority + keys bền)**, gRPC, decision token — đều thật. Còn lại: `x509pop` phù hợp on-prem/VM; cloud-native sẽ dùng `k8s_psat`/`aws_iid`. UpstreamAuthority `disk` đọc root từ file — production thường dùng Vault/AWS-PCA. IdP/PolicyStore vẫn interface+mock.
+---
+
+## Milestone 9 — gRPC-over-mTLS PEP→PDP end-to-end (đã hoàn thành)
+
+PEP gọi PDP qua **gRPC bảo vệ bằng mTLS** (SVID), thay HTTP. Giờ **mọi chặng** đều mTLS: `gateway→PDP`, `wallet→PDP` (gRPC/mTLS), `gateway→multibill`, `multibill→wallet`.
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| PDP gRPC mTLS | `cmd/pdp` mở gRPC creds SVID khi có Workload API; client lạ/không cert bị từ chối ở handshake | ✅ |
+| PEP gRPC client | `services.PDPGRPCClient` dial PDP bằng SVID; `grpcpdp.Client` (impl `pep.PDP`) cắm vào qua `WalletConfig.PDP`/`GatewayConfig.PDP` | ✅ |
+| PDP có SVID riêng | entry `spiffe://vsp.local/ns/pdp/sa/pdp-svc` (uid 10004) | ✅ |
+| Test | gRPC-mTLS: SVID hợp lệ qua được, **foreign-CA bị reject ở handshake** | ✅ |
+| Chạy thật | log `PDP gRPC listening (mTLS)` + `wallet/gateway → PDP over gRPC/mTLS`; flow đúng cả 3 ca | ✅ |
+
+> **Mock vs thật (sau M9):** OPA, mTLS+SVID toàn mesh (gồm PEP→PDP gRPC), SPIRE production, decision token — đều thật. Node attestor `x509pop` (on-prem) → cloud-native `k8s_psat` ở M13; UpstreamAuthority `disk` → Vault ở M12. IdP/PolicyStore vẫn interface+mock (PolicyStore lên S3 ở M10).
 
 ---
 

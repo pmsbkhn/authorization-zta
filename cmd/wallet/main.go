@@ -29,12 +29,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler := services.WalletHandler(services.WalletConfig{
+	wcfg := services.WalletConfig{
 		PDPURL:          pdpURL,
 		Logger:          log,
 		RequirePeerSVID: mtls,
 		TokenSecret:     []byte(envOr("PDP_TOKEN_SECRET", "dev-insecure-secret-change-me")),
-	})
+	}
+	// Prefer gRPC-over-mTLS to the PDP when configured.
+	if grpcAddr := os.Getenv("PDP_GRPC_ADDR"); grpcAddr != "" {
+		c, err := services.PDPGRPCClient(grpcAddr)
+		if err != nil {
+			log.Error("fatal", "err", err)
+			os.Exit(1)
+		}
+		wcfg.PDP = c
+		log.Info("wallet → PDP over gRPC/mTLS", "addr", grpcAddr)
+	}
+	handler := services.WalletHandler(wcfg)
 
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 

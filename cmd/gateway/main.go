@@ -31,12 +31,22 @@ func main() {
 		log.Info("gateway → multibill over mTLS", "upstream", upstreamURL)
 	}
 
-	handler, err := services.GatewayHandler(services.GatewayConfig{
+	gcfg := services.GatewayConfig{
 		PDPURL:      pdpURL,
 		UpstreamURL: upstreamURL,
 		UpstreamTLS: upstreamTLS, // nil in dev mode → plain HTTP
 		Logger:      log,
-	})
+	}
+	if grpcAddr := os.Getenv("PDP_GRPC_ADDR"); grpcAddr != "" {
+		c, err := services.PDPGRPCClient(grpcAddr)
+		if err != nil {
+			log.Error("fatal", "err", err)
+			os.Exit(1)
+		}
+		gcfg.PDP = c
+		log.Info("gateway → PDP over gRPC/mTLS", "addr", grpcAddr)
+	}
+	handler, err := services.GatewayHandler(gcfg)
 	if err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)

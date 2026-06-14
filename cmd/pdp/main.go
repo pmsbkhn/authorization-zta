@@ -37,15 +37,23 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	// Optional gRPC endpoint (design-v3 §6.1).
+	// Optional gRPC endpoint (design-v3 §6.1), over mTLS when an SVID is available.
 	if grpcAddr := os.Getenv("PDP_GRPC_ADDR"); grpcAddr != "" {
 		ln, err := net.Listen("tcp", grpcAddr)
 		if err != nil {
 			return err
 		}
-		gs := grpc.NewServer()
+		var opts []grpc.ServerOption
+		if creds, mtls, err := services.PDPGRPCServerCreds(); err != nil {
+			return err
+		} else if mtls {
+			opts = append(opts, creds)
+			log.Info("PDP gRPC listening (mTLS)", "addr", grpcAddr)
+		} else {
+			log.Warn("PDP gRPC listening (PLAIN, dev mode)", "addr", grpcAddr)
+		}
+		gs := grpc.NewServer(opts...)
 		authzenv1.RegisterAccessEvaluationServer(gs, grpcpdp.NewServer(svc))
-		log.Info("PDP gRPC listening", "addr", grpcAddr)
 		go func() {
 			if err := gs.Serve(ln); err != nil {
 				log.Error("grpc serve", "err", err)

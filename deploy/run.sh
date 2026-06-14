@@ -31,6 +31,7 @@ entry() { SS entry create -parentID "$AGENT_ID" -spiffeID "$1" -selector "unix:u
 entry "spiffe://$TD/ns/edge/sa/api-gateway"        10003
 entry "spiffe://$TD/ns/billing/sa/multi-bill-svc"  10002
 entry "spiffe://$TD/ns/wallet/sa/vsp-wallet-svc"   10001
+entry "spiffe://$TD/ns/pdp/sa/pdp-svc"             10004
 
 echo "==> Starting workloads (SVIDs delivered via SPIRE Workload API)"
 docker compose up -d --build --no-recreate pdp wallet multibill gateway

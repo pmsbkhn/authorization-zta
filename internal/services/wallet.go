@@ -16,6 +16,7 @@ import (
 // WalletConfig configures the VSP Wallet workload + its East-West PEP.
 type WalletConfig struct {
 	PDPURL   string
+	PDP      pep.PDP                // optional transport override (e.g. gRPC-over-mTLS); default HTTP
 	Attestor *mock.WorkloadAttestor // nil → default (any spiffe:// attested)
 	Logger   *slog.Logger
 	// RequirePeerSVID makes the East-West PEP demand a verified mTLS peer
@@ -41,10 +42,14 @@ func WalletHandler(cfg WalletConfig) http.Handler {
 		// TTL here is unused for verification (Verify reads exp from the token).
 		verifier = token.NewIssuer(cfg.TokenSecret, time.Minute)
 	}
+	pdpClient := cfg.PDP
+	if pdpClient == nil {
+		pdpClient = pdpclient.New(cfg.PDPURL)
+	}
 	guard := pep.New(pep.Config{
 		Profile:         authzen.ProfileEastWest,
 		PEPID:           "vsp-wallet-sidecar",
-		PDP:             pdpclient.New(cfg.PDPURL),
+		PDP:             pdpClient,
 		Attestor:        attestor,
 		Logger:          cfg.Logger,
 		RequirePeerSVID: cfg.RequirePeerSVID,
