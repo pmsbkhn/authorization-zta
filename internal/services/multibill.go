@@ -42,7 +42,11 @@ func MultibillHandler(cfg MultibillConfig) http.Handler {
 		copyHeader(out, r, pep.HeaderAAL)
 		copyHeader(out, r, pep.HeaderResourceID)
 		copyHeader(out, r, pep.HeaderCorrelationID)
-		out.Header.Set(pep.HeaderCallerSpiffe, cfg.SelfSpiffe) // assert delegation actor
+		// Dev mode only: assert the delegation actor via header. Under mTLS,
+		// SelfSpiffe is empty and identity travels in the client certificate.
+		if cfg.SelfSpiffe != "" {
+			out.Header.Set(pep.HeaderCallerSpiffe, cfg.SelfSpiffe)
+		}
 
 		resp, err := cfg.HTTPClient.Do(out)
 		if err != nil {

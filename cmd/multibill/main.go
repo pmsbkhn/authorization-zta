@@ -1,6 +1,8 @@
 // Command multibill is the Multi-Bill workload. POST /pay settles via the VSP
-// Wallet over the East-West hop: it stamps its own SPIFFE id as the delegation
-// actor and bubbles up any X-Step-Up-Required the wallet returns.
+// Wallet over the East-West hop. When SVID_* env is present it calls the wallet
+// over mTLS, presenting its own X509-SVID — the wallet derives the delegation
+// actor from that verified certificate. Otherwise it falls back to stamping the
+// X-Vsp-Caller-Spiffe header (dev mode).
 package main
 
 import (
@@ -20,13 +22,26 @@ func main() {
 	selfSpiffe := envOr("MULTIBILL_SPIFFE", "spiffe://vsp.local/ns/billing/sa/multi-bill-svc")
 	addr := envOr("MULTIBILL_ADDR", ":8081")
 
-	handler := services.MultibillHandler(services.MultibillConfig{
-		WalletURL:  walletURL,
-		SelfSpiffe: selfSpiffe,
-		Logger:     log,
-	})
+	tlsCfg, mtls, err := services.LoadClientTLS()
+	if err != nil {
+		log.Error("fatal", "err", err)
+		os.Exit(1)
+	}
 
-	log.Info("multibill listening", "addr", addr, "wallet", walletURL, "spiffe", selfSpiffe)
+	client := &http.Client{Timeout: 5 * time.Second}
+	cfg := services.MultibillConfig{WalletURL: walletURL, SelfSpiffe: selfSpiffe, Logger: log, HTTPClient: client}
+	if mtls {
+		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+		// Workload identity now travels in the client certificate, not a header.
+		cfg.SelfSpiffe = ""
+		log.Info("multibill calling wallet over mTLS", "wallet", walletURL)
+	} else {
+		log.Warn("multibill calling wallet over PLAIN HTTP (dev mode)", "wallet", walletURL, "spiffe", selfSpiffe)
+	}
+
+	handler := services.MultibillHandler(cfg)
+
+	log.Info("multibill listening", "addr", addr)
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("fatal", "err", err)

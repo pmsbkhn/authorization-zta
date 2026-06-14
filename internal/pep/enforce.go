@@ -12,6 +12,7 @@ import (
 
 	"github.com/pmsbkhn/authorization-zta/internal/authzen"
 	"github.com/pmsbkhn/authorization-zta/internal/pip"
+	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 )
 
 // Config wires a PEP to its profile, route guard, PDP and (for East-West) the
@@ -23,6 +24,11 @@ type Config struct {
 	PDP      PDP
 	Attestor pip.WorkloadAttestor // required when Profile == east_west
 	Logger   *slog.Logger
+	// RequirePeerSVID forbids the X-Vsp-Caller-Spiffe header fallback: the
+	// delegation actor MUST come from a verified mTLS peer certificate. Set this
+	// whenever the PEP is served over mTLS (production); leaving it false enables
+	// a dev mode where the header stands in for a missing SVID.
+	RequirePeerSVID bool
 }
 
 // PEP enforces a single profile's policy on inbound requests.
@@ -56,9 +62,15 @@ func (p *PEP) Check(r *http.Request) Outcome {
 		cid = newCorrelationID()
 	}
 
-	// L0 — channel/peer. East-West must present an attested workload SVID.
-	caller := r.Header.Get(HeaderCallerSpiffe)
+	// L0 — channel/peer. East-West must present an attested workload SVID. The
+	// caller identity comes from the cryptographically verified mTLS peer
+	// certificate (its SPIFFE URI SAN), not a spoofable header.
+	caller, present := p.peerIdentity(r)
 	if p.cfg.Profile == authzen.ProfileEastWest {
+		if !present {
+			return Outcome{Kind: DropL0, ReasonCode: "l0_no_peer_svid", CorrelationID: cid}
+		}
+		// Even a valid SVID can be revoked out of band (SPIRE revocation).
 		ok, err := p.cfg.Attestor.ValidateSVID(r.Context(), caller)
 		if err != nil || !ok {
 			return Outcome{Kind: DropL0, ReasonCode: "l0_peer_not_attested", CorrelationID: cid}
@@ -116,6 +128,25 @@ func (p *PEP) classify(resp authzen.Response, cid string) Outcome {
 		rc = resp.Context.ReasonCode
 	}
 	return Outcome{Kind: DenyForbidden, ReasonCode: rc, CorrelationID: cid}
+}
+
+// peerIdentity resolves the calling workload's SPIFFE id. It prefers the mTLS
+// peer certificate, which by the time the handler runs has already been verified
+// and authorized (member of the trust domain) during the TLS handshake — so the
+// id is trustworthy. The X-Vsp-Caller-Spiffe header is only consulted as a dev
+// fallback when RequirePeerSVID is false.
+func (p *PEP) peerIdentity(r *http.Request) (string, bool) {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		if id, err := x509svid.IDFromCert(r.TLS.PeerCertificates[0]); err == nil {
+			return id.String(), true
+		}
+	}
+	if !p.cfg.RequirePeerSVID {
+		if h := r.Header.Get(HeaderCallerSpiffe); h != "" {
+			return h, true
+		}
+	}
+	return "", false
 }
 
 func (p *PEP) matchRoute(method, path string) (Route, bool) {

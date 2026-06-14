@@ -48,6 +48,31 @@ client ──> gateway(:8088)      ──> multibill(:8081) ──> wallet(:8082
 5. Gateway (Edge PEP) dịch thành **HTTP 401** challenge để UI bật MFA.
 6. User MFA → **AAL3** → retry → settle thành công (**200**).
 
+> Lưu ý M2: danh tính workload (`act`) ban đầu propagate qua header `X-Vsp-Caller-Spiffe`. M3 thay bằng mTLS/SVID thật.
+
+---
+
+## Milestone 3 — mTLS + SPIFFE SVID thật ở L0 (đã hoàn thành)
+
+Phạm vi M3: thay header propagation bằng **mutual TLS thật** với **SPIFFE X509-SVID**. Chặng East-West (`multibill → wallet`) giờ là mTLS; **delegation actor (`act`) lấy từ client cert đã verify**, không thể giả mạo bằng header.
+
+| Thành phần | Vai trò | Trạng thái |
+|---|---|---|
+| SPIFFE CA (`internal/spiffe`) | CA in-process **đóng vai SPIRE**: mint X509-SVID (URI SAN `spiffe://`), trust bundle, dựng `tls.Config` mTLS qua `go-spiffe/v2` | ✅ |
+| `cmd/svidmint` | Cấp `ca.pem` + SVID cert/key cho từng workload ra disk (stand-in cho SPIRE Workload API) | ✅ |
+| PEP L0 (`internal/pep`) | Lấy SPIFFE id từ **peer cert đã verify** (`r.TLS`), không từ header; cờ `RequirePeerSVID` | ✅ |
+| Wallet mTLS server | Yêu cầu + verify + authorize client SVID (member of trust domain) | ✅ |
+| Multi-Bill mTLS client | Trình SVID của chính nó khi gọi Wallet; bỏ header caller | ✅ |
+| E2E mTLS tests | Happy-path qua mTLS, **no-cert → drop ở handshake (L0)**, **foreign CA → reject ở handshake** | ✅ |
+
+**Điều mTLS đảm bảo (đã verify live + test):**
+- mTLS **thật**: handshake, xác minh chuỗi chứng chỉ và authorize trust-domain đều thật (lib `go-spiffe/v2`); chỉ phần *cấp phát* CA là mock thay cho SPIRE.
+- **Drop-connection ở L0 (§2):** client không có SVID → rớt ngay tại TLS handshake, không chạm PEP/PDP.
+- **Chống giả mạo:** cert ký bởi CA lạ bị từ chối ở handshake. Danh tính `act` của PDP nhận được là **mật mã**, không phải header.
+- **Phân tách đúng:** danh tính *workload* = mTLS/SVID (mật mã); danh tính *user* (`subject`/`aal`) = vẫn propagate (production sẽ là signed token).
+
+> **Mock vs thật:** SVID/mTLS thật; SPIRE control-plane (server/agent + Workload API + rotation) vẫn mock bằng `cmd/svidmint` ghi cert ra disk.
+
 ---
 
 ## Yêu cầu
@@ -60,12 +85,15 @@ client ──> gateway(:8088)      ──> multibill(:8081) ──> wallet(:8082
 ### Demo nhanh toàn chuỗi (khuyến nghị)
 
 ```bash
-./scripts/demo.sh   # build + boot pdp/wallet/multibill/gateway, chạy 3 ca rồi tự dọn
+./scripts/demo.sh   # mint SVID + boot 4 service (East-West chạy mTLS thật), chạy 3 ca rồi tự dọn
 ```
 
 Kết quả mong đợi: (1) AAL2 9M → `401 step-up=AAL3`, (2) AAL3 9M → `200 settled`, (3) AAL2 1M → `200 settled`.
+Demo cấp SVID bằng `cmd/svidmint` và chạy chặng `multibill → wallet` qua mTLS.
 
 ### Chạy thủ công từng service
+
+> Không set `SVID_*` → wallet chạy **plain HTTP dev mode** (L0 tin header `X-Vsp-Caller-Spiffe`). Set `SVID_BUNDLE`/`SVID_CERT`/`SVID_KEY` → bật mTLS (xem `scripts/demo.sh`).
 
 ```bash
 go run ./cmd/pdp                                 # Control Plane PDP   :8080
@@ -119,8 +147,9 @@ opa test policies/ -v # Fitness functions Rego (9 ca)
 cmd/
   pdp/               # Control Plane PDP (AuthZEN facade + OPA)
   gateway/           # Edge PEP / API Gateway (profile=edge)
-  multibill/         # Multi-Bill workload (delegation + bubble-up)
-  wallet/            # VSP Wallet workload + East-West PEP (profile=east_west)
+  multibill/         # Multi-Bill workload (delegation + bubble-up; mTLS client)
+  wallet/            # VSP Wallet workload + East-West PEP (profile=east_west; mTLS server)
+  svidmint/          # cấp CA + SVID ra disk (stand-in cho SPIRE)
 internal/
   authzen/           # VSP Standard Contract (types) + validation naming-convention
   api/               # AuthZEN 1.0 HTTP facade
@@ -129,6 +158,7 @@ internal/
   token/             # decision_token (HS256, có TTL, ràng buộc tuple)
   pep/               # PEP library: L0/L1/L2 ladder + bubble-up (edge→401, east_west→403)
   pdpclient/         # HTTP client AuthZEN cho PEP
+  spiffe/            # SPIFFE CA in-process + mint X509-SVID + tls.Config mTLS (go-spiffe)
   services/          # wiring từng process thành http.Handler (cmd mỏng + E2E test)
   pip/               # interface IdP / SPIRE / PolicyStore (Policy Information Points)
   mock/              # mock của các PIP
@@ -155,8 +185,9 @@ policies/            # OPA bundle (embed vào binary)
 ## Next steps (theo §6 + lộ trình)
 
 - [x] ~~**Full E2E PEP layer**~~ — Edge PEP + East-West PEP + bubble-up step-up (M2).
-- [ ] **mTLS/SVID thật** thay header propagation: L0 lấy danh tính peer từ chứng chỉ SVID (SPIRE), không từ `X-Vsp-Caller-Spiffe`.
-- [ ] Wire mock PIP vào hot path (IdP enrich subject, SPIRE attest SVID ở L0).
+- [x] ~~**mTLS/SVID thật ở L0**~~ — mTLS + SPIFFE X509-SVID cho chặng East-West (M3).
+- [ ] **SPIRE thật** thay `svidmint`: SPIRE server/agent + Workload API + SVID rotation; mTLS cho mọi chặng nội bộ (gồm gateway→multibill).
+- [ ] Wire mock PIP còn lại vào hot path (IdP enrich subject; revocation/posture qua attestor).
 - [ ] **Decision token re-use:** PEP sâu chấp nhận `X-Decision-Token` AAL3 để bỏ qua re-eval trong TTL.
 - [ ] **Protobuf contract** cho luồng gRPC nội bộ (§6.1).
 - [ ] **GitOps + immutable S3 bundle store** thật, PDP/PEP pull bundle (§5.3) — thay cho embed.

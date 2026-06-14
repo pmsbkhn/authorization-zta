@@ -16,6 +16,10 @@ type WalletConfig struct {
 	PDPURL   string
 	Attestor *mock.WorkloadAttestor // nil → default (any spiffe:// attested)
 	Logger   *slog.Logger
+	// RequirePeerSVID makes the East-West PEP demand a verified mTLS peer
+	// certificate (set when the wallet is served over mTLS). When false, the
+	// X-Vsp-Caller-Spiffe header stands in (dev mode).
+	RequirePeerSVID bool
 }
 
 // WalletHandler builds the wallet service: POST /settle guarded by an East-West
@@ -27,11 +31,12 @@ func WalletHandler(cfg WalletConfig) http.Handler {
 		attestor = &mock.WorkloadAttestor{Revoked: map[string]bool{}}
 	}
 	guard := pep.New(pep.Config{
-		Profile:  authzen.ProfileEastWest,
-		PEPID:    "vsp-wallet-sidecar",
-		PDP:      pdpclient.New(cfg.PDPURL),
-		Attestor: attestor,
-		Logger:   cfg.Logger,
+		Profile:         authzen.ProfileEastWest,
+		PEPID:           "vsp-wallet-sidecar",
+		PDP:             pdpclient.New(cfg.PDPURL),
+		Attestor:        attestor,
+		Logger:          cfg.Logger,
+		RequirePeerSVID: cfg.RequirePeerSVID,
 		Routes: []pep.Route{{
 			Method:        http.MethodPost,
 			Path:          "/settle",
