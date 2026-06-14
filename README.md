@@ -20,7 +20,33 @@ Phạm vi M1: **PDP + AuthZEN facade + OPA thật (nhúng làm thư viện)**. C
 | PIP seams + mocks (`internal/pip`, `internal/mock`) | IdP / SPIRE / PolicyStore dạng interface | ✅ (mock) |
 | Fitness functions | `opa test` (9 ca) + Go tests E2E | ✅ |
 
-> **L0/L1/L2 & bubble-up step-up (§2, §4):** OPA đã phát obligation `step_up` đúng (xem demo bên dưới). Phần *thực thi* L0/L1 tại PEP và logic dội ngược header `X-Step-Up-Required` thuộc về **PEP layer** — sẽ làm ở milestone Full E2E.
+---
+
+## Milestone 2 — PEP layer + bubble-up step-up (đã hoàn thành)
+
+Phạm vi M2: dựng **Data Plane / PEP layer** đầy đủ và hiện thực hóa **Bubble-up Pattern (§4)** xuyên chặng. Toàn bộ chuỗi chạy thật được:
+
+```
+client ──> gateway(:8088)      ──> multibill(:8081) ──> wallet(:8082)        ──> pdp(:8080)
+           Edge PEP (edge)          (delegation)          East-West PEP (east_west)   Control Plane
+```
+
+| Thành phần | Vai trò | Trạng thái |
+|---|---|---|
+| PEP library (`internal/pep`) | Phễu **L0** (SVID/peer) → **L1** (route guard) → **L2** (gọi PDP); fail-closed; map Outcome→HTTP theo profile | ✅ |
+| PDP client (`internal/pdpclient`) | Client AuthZEN cho PEP; non-200 = deny | ✅ |
+| Edge PEP — Gateway (`cmd/gateway`) | Authorize `bill:pay` (profile=edge), reverse-proxy Multi-Bill, dịch bubble-up → **401 challenge** | ✅ |
+| Multi-Bill (`cmd/multibill`) | Gọi Wallet để settle, gắn SPIFFE làm **delegation actor**, **bubble-up** `X-Step-Up-Required` | ✅ |
+| VSP Wallet (`cmd/wallet`) | East-West PEP (profile=east_west); step-up → **403 + header** (không challenge) | ✅ |
+| E2E integration test | Wiring cả 4 service in-process, kiểm chứng bubble-up + retry AAL3 | ✅ |
+
+**Bubble-up step-up hoạt động (đã verify live + test):**
+1. User `bill:pay` 9.000.000đ ở **AAL2** → Edge cho qua (`bill:pay` chỉ cần AAL2).
+2. Multi-Bill gọi Wallet `wallet:settle` (9M) → Wallet East-West PEP hỏi PDP → **deny + `step_up→AAL3`**.
+3. Wallet PEP **không challenge** (không có session user) → trả **403 + `X-Step-Up-Required: AAL3`**.
+4. Multi-Bill dội ngược header lên Gateway.
+5. Gateway (Edge PEP) dịch thành **HTTP 401** challenge để UI bật MFA.
+6. User MFA → **AAL3** → retry → settle thành công (**200**).
 
 ---
 
@@ -31,10 +57,31 @@ Phạm vi M1: **PDP + AuthZEN facade + OPA thật (nhúng làm thư viện)**. C
 
 ## Chạy
 
+### Demo nhanh toàn chuỗi (khuyến nghị)
+
 ```bash
-# Khởi động PDP (mặc định :8080)
-go run ./cmd/pdp
-# hoặc đổi port / secret / ttl:
+./scripts/demo.sh   # build + boot pdp/wallet/multibill/gateway, chạy 3 ca rồi tự dọn
+```
+
+Kết quả mong đợi: (1) AAL2 9M → `401 step-up=AAL3`, (2) AAL3 9M → `200 settled`, (3) AAL2 1M → `200 settled`.
+
+### Chạy thủ công từng service
+
+```bash
+go run ./cmd/pdp                                 # Control Plane PDP   :8080
+PDP_URL=http://localhost:8080 go run ./cmd/wallet        # Wallet + East-West PEP :8082
+WALLET_URL=http://localhost:8082 go run ./cmd/multibill  # Multi-Bill          :8081
+PDP_URL=http://localhost:8080 MULTIBILL_URL=http://localhost:8081 go run ./cmd/gateway  # Edge PEP :8088
+
+# Gọi qua Edge Gateway (bubble-up step-up):
+curl -i -X POST localhost:8088/pay -H 'Content-Type: application/json' \
+  -H 'X-Vsp-Subject-Id: u-1' -H 'X-Vsp-Aal: AAL2' -H 'X-Vsp-Resource-Id: inv-1' \
+  -d '{"amount":9000000,"currency":"VND"}'      # → 401 + X-Step-Up-Required: AAL3
+```
+
+### Chỉ chạy PDP (Control Plane)
+
+```bash
 PDP_ADDR=:8080 PDP_TOKEN_SECRET=change-me PDP_TOKEN_TTL=5m go run ./cmd/pdp
 ```
 
@@ -69,15 +116,22 @@ opa test policies/ -v # Fitness functions Rego (9 ca)
 ## Cấu trúc
 
 ```
-cmd/pdp/             # main: nạp bundle, dựng engine + PDP + facade, serve HTTP
+cmd/
+  pdp/               # Control Plane PDP (AuthZEN facade + OPA)
+  gateway/           # Edge PEP / API Gateway (profile=edge)
+  multibill/         # Multi-Bill workload (delegation + bubble-up)
+  wallet/            # VSP Wallet workload + East-West PEP (profile=east_west)
 internal/
   authzen/           # VSP Standard Contract (types) + validation naming-convention
   api/               # AuthZEN 1.0 HTTP facade
   pdp/               # Unified Router: orchestration ra quyết định
   engine/            # OPA nhúng (compile + eval) → engine.Decision
   token/             # decision_token (HS256, có TTL, ràng buộc tuple)
+  pep/               # PEP library: L0/L1/L2 ladder + bubble-up (edge→401, east_west→403)
+  pdpclient/         # HTTP client AuthZEN cho PEP
+  services/          # wiring từng process thành http.Handler (cmd mỏng + E2E test)
   pip/               # interface IdP / SPIRE / PolicyStore (Policy Information Points)
-  mock/              # mock của các PIP cho M1
+  mock/              # mock của các PIP
 policies/            # OPA bundle (embed vào binary)
   main.rego          #   vsp.authz — entrypoint/router, fail-closed
   global/            #   vsp.global — validate schema naming-convention
@@ -100,8 +154,10 @@ policies/            # OPA bundle (embed vào binary)
 
 ## Next steps (theo §6 + lộ trình)
 
-- [ ] **Full E2E PEP layer:** Edge PEP (API Gateway) + East-West Sidecar, thực thi L0 (mTLS/SVID) & L1 (route guard), và **bubble-up** `X-Step-Up-Required` → 401 challenge.
+- [x] ~~**Full E2E PEP layer**~~ — Edge PEP + East-West PEP + bubble-up step-up (M2).
+- [ ] **mTLS/SVID thật** thay header propagation: L0 lấy danh tính peer từ chứng chỉ SVID (SPIRE), không từ `X-Vsp-Caller-Spiffe`.
 - [ ] Wire mock PIP vào hot path (IdP enrich subject, SPIRE attest SVID ở L0).
+- [ ] **Decision token re-use:** PEP sâu chấp nhận `X-Decision-Token` AAL3 để bỏ qua re-eval trong TTL.
 - [ ] **Protobuf contract** cho luồng gRPC nội bộ (§6.1).
 - [ ] **GitOps + immutable S3 bundle store** thật, PDP/PEP pull bundle (§5.3) — thay cho embed.
 - [ ] **Dynamic Attributes Cache / CAEP** push thu hồi session/posture (§6.2).

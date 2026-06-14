@@ -1,0 +1,135 @@
+package services_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/pmsbkhn/authorization-zta/internal/mock"
+	"github.com/pmsbkhn/authorization-zta/internal/pep"
+	"github.com/pmsbkhn/authorization-zta/internal/services"
+)
+
+// chain wires the whole data path in-process: client → gateway → multibill →
+// wallet → pdp. It returns the gateway base URL and a cleanup func.
+func chain(t *testing.T, walletCfg services.WalletConfig) string {
+	t.Helper()
+
+	pdpH, err := services.PDPHandler(context.Background(), services.PDPConfig{TokenSecret: []byte("test")})
+	if err != nil {
+		t.Fatalf("pdp: %v", err)
+	}
+	pdp := httptest.NewServer(pdpH.Routes())
+	t.Cleanup(pdp.Close)
+
+	walletCfg.PDPURL = pdp.URL
+	wallet := httptest.NewServer(services.WalletHandler(walletCfg))
+	t.Cleanup(wallet.Close)
+
+	multibill := httptest.NewServer(services.MultibillHandler(services.MultibillConfig{
+		WalletURL:  wallet.URL,
+		SelfSpiffe: "spiffe://vsp.local/ns/billing/sa/multi-bill-svc",
+	}))
+	t.Cleanup(multibill.Close)
+
+	gwH, err := services.GatewayHandler(services.GatewayConfig{PDPURL: pdp.URL, UpstreamURL: multibill.URL})
+	if err != nil {
+		t.Fatalf("gateway: %v", err)
+	}
+	gw := httptest.NewServer(gwH)
+	t.Cleanup(gw.Close)
+
+	return gw.URL
+}
+
+// pay sends a user payment through the gateway at the given assurance level.
+func pay(t *testing.T, gwURL, aal string, amount int) *http.Response {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"amount": amount, "currency": "VND"})
+	req, _ := http.NewRequest(http.MethodPost, gwURL+"/pay", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(pep.HeaderSubjectID, "u-1")
+	req.Header.Set(pep.HeaderAAL, aal)
+	req.Header.Set(pep.HeaderResourceID, "inv-1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	return resp
+}
+
+func decode(t *testing.T, resp *http.Response) map[string]any {
+	t.Helper()
+	defer resp.Body.Close()
+	var m map[string]any
+	b, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+// The headline scenario (design-v3 §4): a high-value payment at AAL2 is denied
+// deep in the wallet, the step-up bubbles up to a 401 at the edge, and the same
+// payment retried at AAL3 succeeds.
+func TestE2E_BubbleUpStepUpThenRetrySucceeds(t *testing.T) {
+	gw := chain(t, services.WalletConfig{})
+
+	// AAL2, 9M VND → wallet demands AAL3; edge surfaces a 401 challenge.
+	resp := pay(t, gw, "AAL2", 9_000_000)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 step-up challenge, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get(pep.HeaderStepUpRequired); got != "AAL3" {
+		t.Errorf("X-Step-Up-Required = %q, want AAL3", got)
+	}
+	body := decode(t, resp)
+	if body["error"] != "step_up_required" || body["required_acr"] != "AAL3" {
+		t.Errorf("unexpected challenge body: %v", body)
+	}
+
+	// Retry the same payment at AAL3 → settles end to end.
+	resp = pay(t, gw, "AAL3", 9_000_000)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on AAL3 retry, got %d", resp.StatusCode)
+	}
+	body = decode(t, resp)
+	if body["settled"] != true {
+		t.Errorf("expected settled=true, got %v", body)
+	}
+}
+
+// A low-value payment needs no step-up: AAL2 settles directly.
+func TestE2E_LowValueDirectAllow(t *testing.T) {
+	gw := chain(t, services.WalletConfig{})
+
+	resp := pay(t, gw, "AAL2", 1_000_000)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if decode(t, resp)["settled"] != true {
+		t.Error("expected settled=true for low-value AAL2 payment")
+	}
+}
+
+// L0: the wallet's East-West PEP drops a call whose delegation actor (SVID) is
+// not attested, before any policy evaluation.
+func TestE2E_WalletL0RejectsRevokedCaller(t *testing.T) {
+	revoked := "spiffe://vsp.local/ns/billing/sa/multi-bill-svc"
+	gw := chain(t, services.WalletConfig{
+		Attestor: &mock.WorkloadAttestor{Revoked: map[string]bool{revoked: true}},
+	})
+
+	// Even at AAL3 the wallet refuses: the caller's SVID is revoked at L0, so the
+	// step-up bubbles up to a 401 is NOT what happens — it's a hard L0 deny (403)
+	// that surfaces at the edge as a plain forbidden, not a challenge.
+	resp := pay(t, gw, "AAL3", 1_000_000)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 from L0 drop, got %d", resp.StatusCode)
+	}
+	if resp.Header.Get(pep.HeaderStepUpRequired) != "" {
+		t.Error("L0 drop must not advertise a step-up")
+	}
+}
