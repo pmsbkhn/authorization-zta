@@ -97,6 +97,22 @@ PEP sâu chấp nhận `X-Decision-Token` hợp lệ và **bỏ qua PDP** cho re
 
 ---
 
+## Milestone 6 — Protobuf/gRPC AuthZEN contract (đã hoàn thành)
+
+Bổ sung kênh **gRPC** cho luồng nội bộ song song với facade JSON/HTTP (§6.1).
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| Proto contract (`proto/authzen/v1`) | `AccessEvaluation.Evaluate`; `properties`/`context` dùng `google.protobuf.Struct` → không cần schema cứng cho thuộc tính nghiệp vụ | ✅ |
+| gRPC server (`internal/grpcpdp`) | Bọc `pdp.Service`; validation→`InvalidArgument`, lỗi nội bộ→`Internal` (khớp HTTP) | ✅ |
+| gRPC client | Implement `pep.PDP` → **drop-in** thay `pdpclient` HTTP, không đổi PEP | ✅ |
+| PDP phục vụ gRPC | `cmd/pdp` mở thêm gRPC khi set `PDP_GRPC_ADDR` (song song HTTP `:8080`) | ✅ |
+| Roundtrip test | allow + decision_token + obligation `step_up`, và validation→`InvalidArgument`, qua wire thật | ✅ |
+
+Regen stubs: `./proto/generate.sh` (cần `protoc` + `protoc-gen-go`/`protoc-gen-go-grpc`).
+
+---
+
 ## Yêu cầu
 
 - **Go** ≥ 1.22 (dùng method-based routing của `net/http.ServeMux`). Đã test với 1.26.
@@ -167,7 +183,7 @@ opa test policies/ -v # Fitness functions Rego (9 ca)
 
 ```
 cmd/
-  pdp/               # Control Plane PDP (AuthZEN facade + OPA)
+  pdp/               # Control Plane PDP (AuthZEN HTTP facade + OPA + gRPC)
   gateway/           # Edge PEP / API Gateway (profile=edge)
   multibill/         # Multi-Bill workload (delegation + bubble-up; mTLS client)
   wallet/            # VSP Wallet workload + East-West PEP (profile=east_west; mTLS server)
@@ -180,10 +196,12 @@ internal/
   token/             # decision_token (HS256, có TTL, ràng buộc tuple)
   pep/               # PEP library: L0/L1/L2 ladder + bubble-up (edge→401, east_west→403)
   pdpclient/         # HTTP client AuthZEN cho PEP
-  spiffe/            # SPIFFE CA in-process + mint X509-SVID + tls.Config mTLS (go-spiffe)
+  spiffe/            # SPIFFE CA in-process + mint X509-SVID + rotation + Source + mTLS (go-spiffe)
+  grpcpdp/           # gRPC PDP server (bọc pdp.Service) + client (implement pep.PDP)
   services/          # wiring từng process thành http.Handler (cmd mỏng + E2E test)
   pip/               # interface IdP / SPIRE / PolicyStore (Policy Information Points)
   mock/              # mock của các PIP
+proto/authzen/v1/    # Protobuf/gRPC AuthZEN contract + generated *.pb.go
 policies/            # OPA bundle (embed vào binary)
   main.rego          #   vsp.authz — entrypoint/router, fail-closed
   global/            #   vsp.global — validate schema naming-convention
@@ -207,12 +225,15 @@ policies/            # OPA bundle (embed vào binary)
 ## Next steps (theo §6 + lộ trình)
 
 - [x] ~~**Full E2E PEP layer**~~ — Edge PEP + East-West PEP + bubble-up step-up (M2).
-- [x] ~~**mTLS/SVID thật ở L0**~~ — mTLS + SPIFFE X509-SVID cho chặng East-West (M3).
-- [ ] **SPIRE thật** thay `svidmint`: SPIRE server/agent + Workload API + SVID rotation; mTLS cho mọi chặng nội bộ (gồm gateway→multibill).
+- [x] ~~**mTLS/SVID thật ở L0**~~ — mTLS + SPIFFE X509-SVID, cả 2 chặng nội bộ (M3–M4).
+- [x] ~~**SVID rotation + SPIRE-ready**~~ — rotation + `workloadapi` khi có `SPIFFE_ENDPOINT_SOCKET` (M4).
+- [x] ~~**Decision token re-use**~~ — PEP fast-path, ràng digest, sống sót PDP outage (M5).
+- [x] ~~**Protobuf/gRPC contract**~~ — `AccessEvaluation.Evaluate`, client drop-in cho PEP (M6).
+- [ ] **SPIRE daemon thật** thay `svidmint`: spire-server/agent + registration entries qua Workload API.
+- [ ] **gRPC qua mTLS end-to-end**: PEP dùng `grpcpdp.Client` + creds SVID thay HTTP `pdpclient`.
 - [ ] Wire mock PIP còn lại vào hot path (IdP enrich subject; revocation/posture qua attestor).
-- [ ] **Decision token re-use:** PEP sâu chấp nhận `X-Decision-Token` AAL3 để bỏ qua re-eval trong TTL.
-- [ ] **Protobuf contract** cho luồng gRPC nội bộ (§6.1).
 - [ ] **GitOps + immutable S3 bundle store** thật, PDP/PEP pull bundle (§5.3) — thay cho embed.
 - [ ] **Dynamic Attributes Cache / CAEP** push thu hồi session/posture (§6.2).
+- [ ] **ReBAC/Zanzibar** sau interface `pdp.Engine` (§6.3).
 - [ ] Asymmetric signing cho decision_token (PDP ký private key, PEP verify public key).
 ```

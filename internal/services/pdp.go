@@ -23,9 +23,10 @@ type PDPConfig struct {
 	Logger      *slog.Logger
 }
 
-// PDPHandler builds the AuthZEN facade over an embedded OPA engine. Policy
-// compilation happens here, so a bad bundle fails at construction.
-func PDPHandler(ctx context.Context, cfg PDPConfig) (*api.Handler, error) {
+// PDPService builds the decision core (embedded OPA engine + token issuer).
+// Policy compilation happens here, so a bad bundle fails at construction. The
+// returned service backs both the HTTP facade and the gRPC server.
+func PDPService(ctx context.Context, cfg PDPConfig) (*pdp.Service, error) {
 	mods, err := policies.Modules()
 	if err != nil {
 		return nil, err
@@ -41,6 +42,14 @@ func PDPHandler(ctx context.Context, cfg PDPConfig) (*api.Handler, error) {
 	if cfg.TokenTTL == 0 {
 		cfg.TokenTTL = 300 * time.Second
 	}
-	issuer := token.NewIssuer(cfg.TokenSecret, cfg.TokenTTL)
-	return api.NewHandler(pdp.New(eng, issuer), cfg.Logger), nil
+	return pdp.New(eng, token.NewIssuer(cfg.TokenSecret, cfg.TokenTTL)), nil
+}
+
+// PDPHandler builds the AuthZEN HTTP facade over the decision core.
+func PDPHandler(ctx context.Context, cfg PDPConfig) (*api.Handler, error) {
+	svc, err := PDPService(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return api.NewHandler(svc, cfg.Logger), nil
 }
