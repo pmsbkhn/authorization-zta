@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pmsbkhn/authorization-zta/internal/api"
+	"github.com/pmsbkhn/authorization-zta/internal/bundlestore"
 	"github.com/pmsbkhn/authorization-zta/internal/grpcpdp"
 	"github.com/pmsbkhn/authorization-zta/internal/services"
 	authzenv1 "github.com/pmsbkhn/authorization-zta/proto/authzen/v1"
@@ -28,11 +29,32 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
-	svc, err := services.PDPService(context.Background(), services.PDPConfig{
+	cfg := services.PDPConfig{
 		TokenSecret: tokenSecret(),
 		TokenTTL:    tokenTTL(),
 		Logger:      log,
-	})
+	}
+	// GitOps pull path: load the compiled bundle from the immutable S3 store.
+	if ep := os.Getenv("S3_ENDPOINT"); ep != "" {
+		store, err := bundlestore.New(bundlestore.Config{
+			Endpoint:  ep,
+			AccessKey: envOr("S3_ACCESS_KEY", "minioadmin"),
+			SecretKey: envOr("S3_SECRET_KEY", "minioadmin"),
+			Bucket:    envOr("S3_BUCKET", "vsp-policy-bundles"),
+			Object:    envOr("S3_OBJECT", "bundle.tar.gz"),
+		})
+		if err != nil {
+			return err
+		}
+		data, version, err := store.LatestBundle(context.Background())
+		if err != nil {
+			return err
+		}
+		cfg.Bundle = data
+		log.Info("loaded policy bundle from S3", "bytes", len(data), "version", version)
+	}
+
+	svc, err := services.PDPService(context.Background(), cfg)
 	if err != nil {
 		return err
 	}

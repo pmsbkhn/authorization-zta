@@ -21,21 +21,32 @@ type PDPConfig struct {
 	TokenSecret []byte
 	TokenTTL    time.Duration
 	Logger      *slog.Logger
+	// Bundle, when non-empty, is a compiled OPA bundle the PDP loads from the
+	// policy store (S3) instead of the embedded policies — the GitOps pull path.
+	Bundle []byte
 }
 
 // PDPService builds the decision core (embedded OPA engine + token issuer).
 // Policy compilation happens here, so a bad bundle fails at construction. The
 // returned service backs both the HTTP facade and the gRPC server.
 func PDPService(ctx context.Context, cfg PDPConfig) (*pdp.Service, error) {
-	mods, err := policies.Modules()
-	if err != nil {
-		return nil, err
+	var eng *engine.Engine
+	var err error
+	if len(cfg.Bundle) > 0 {
+		// Pull-from-store path: run exactly the bundle CI published.
+		eng, err = engine.NewFromBundle(ctx, cfg.Bundle, engine.DefaultDecisionQuery)
+	} else {
+		// Embedded path: policies baked into the binary.
+		mods, derr := policies.Modules()
+		if derr != nil {
+			return nil, derr
+		}
+		data, derr := policies.Data()
+		if derr != nil {
+			return nil, derr
+		}
+		eng, err = engine.New(ctx, mods, data, engine.DefaultDecisionQuery)
 	}
-	data, err := policies.Data()
-	if err != nil {
-		return nil, err
-	}
-	eng, err := engine.New(ctx, mods, data, engine.DefaultDecisionQuery)
 	if err != nil {
 		return nil, err
 	}
