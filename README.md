@@ -113,6 +113,37 @@ Regen stubs: `./proto/generate.sh` (cần `protoc` + `protoc-gen-go`/`protoc-gen
 
 ---
 
+## Milestone 7 — SPIRE thật qua Docker Compose (đã hoàn thành)
+
+Thay `svidmint` bằng **SPIRE server + agent thật** (`ghcr.io/spiffe/spire:1.15.1`). SVID được cấp qua **Workload API** — không còn cert tĩnh trên disk. Code Go **không đổi** (đã SPIRE-ready từ M4: tự dùng `SPIFFE_ENDPOINT_SOCKET`).
+
+```
+user ──http──> gateway ──mTLS──> multibill ──mTLS──> wallet ──http──> pdp
+                  └──────── SVID do SPIRE agent cấp qua Workload API ────────┘
+```
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| SPIRE server | trust domain `vsp.local`, sqlite + memory keys, node attestor `join_token` | ✅ |
+| SPIRE agent | join-token attestation, `WorkloadAttestor unix`, Workload API socket chia sẻ qua volume | ✅ |
+| Workload attestation | `unix:uid` — mỗi service chạy 1 uid riêng (10001/2/3), agent `pid:host` để resolve caller | ✅ |
+| Containerize | `deploy/Dockerfile` build 4 binary (static, distroless); `deploy/compose.yaml` | ✅ |
+| Orchestration | `deploy/run.sh`: server → join token → agent → registration entries → workloads → demo | ✅ |
+| Chạy thật | full stack lên, flow bubble-up + retry + low-value **đúng cả 3 ca**, mTLS mọi chặng nội bộ với SVID SPIRE | ✅ |
+
+### Chạy demo SPIRE thật
+
+```bash
+cd deploy && ./run.sh
+# Reset: docker compose -f deploy/compose.yaml down -v
+# Xem SVID đã đăng ký:
+docker compose -f deploy/compose.yaml exec spire-server /opt/spire/bin/spire-server entry show
+```
+
+> **Mock vs thật giờ:** OPA, mTLS+SVID, **SPIRE control-plane (server/agent + Workload API + attestation + rotation)**, gRPC, decision token — đều thật. Còn mock: `join_token` thay node attestor production (k8s_psat/aws_iid), IdP/PolicyStore vẫn interface; SPIRE chạy `insecure_bootstrap` + keys in-memory (demo-grade).
+
+---
+
 ## Yêu cầu
 
 - **Go** ≥ 1.22 (dùng method-based routing của `net/http.ServeMux`). Đã test với 1.26.
@@ -202,6 +233,7 @@ internal/
   pip/               # interface IdP / SPIRE / PolicyStore (Policy Information Points)
   mock/              # mock của các PIP
 proto/authzen/v1/    # Protobuf/gRPC AuthZEN contract + generated *.pb.go
+deploy/              # SPIRE thật: Dockerfile + compose.yaml + spire/ config + run.sh
 policies/            # OPA bundle (embed vào binary)
   main.rego          #   vsp.authz — entrypoint/router, fail-closed
   global/            #   vsp.global — validate schema naming-convention
@@ -229,7 +261,8 @@ policies/            # OPA bundle (embed vào binary)
 - [x] ~~**SVID rotation + SPIRE-ready**~~ — rotation + `workloadapi` khi có `SPIFFE_ENDPOINT_SOCKET` (M4).
 - [x] ~~**Decision token re-use**~~ — PEP fast-path, ràng digest, sống sót PDP outage (M5).
 - [x] ~~**Protobuf/gRPC contract**~~ — `AccessEvaluation.Evaluate`, client drop-in cho PEP (M6).
-- [ ] **SPIRE daemon thật** thay `svidmint`: spire-server/agent + registration entries qua Workload API.
+- [x] ~~**SPIRE daemon thật**~~ — spire-server/agent qua docker-compose, SVID qua Workload API (M7).
+- [ ] **Node attestor production** thay `join_token` (k8s_psat/aws_iid); UpstreamAuthority + durable KeyManager.
 - [ ] **gRPC qua mTLS end-to-end**: PEP dùng `grpcpdp.Client` + creds SVID thay HTTP `pdpclient`.
 - [ ] Wire mock PIP còn lại vào hot path (IdP enrich subject; revocation/posture qua attestor).
 - [ ] **GitOps + immutable S3 bundle store** thật, PDP/PEP pull bundle (§5.3) — thay cho embed.

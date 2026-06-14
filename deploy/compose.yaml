@@ -1,0 +1,91 @@
+# Real SPIRE deployment of the VSP authorization mesh.
+#
+#   user ──http──> gateway ──mTLS──> multibill ──mTLS──> wallet ──http──> pdp
+#                     (SVIDs issued by the SPIRE agent over the Workload API)
+#
+# spire-server issues SVIDs; spire-agent attests workloads by their unix uid and
+# serves them SVIDs on a shared Workload API socket. Each VSP service runs under
+# a distinct uid so the agent can tell them apart (see deploy/run.sh for the
+# registration entries). Bring the stack up with deploy/run.sh, not bare compose:
+# the agent needs a join token and the entries must exist first.
+name: vsp-zta
+
+volumes:
+  wlapi: {}          # shared Workload API socket (agent ⇄ workloads)
+  server-data: {}
+  agent-data: {}
+
+services:
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.15.1
+    command: ["-config", "/opt/spire/conf/server/server.conf"]
+    hostname: spire-server
+    user: "0:0"   # demo: own the data volume without uid wrangling
+    volumes:
+      - ./spire/server/server.conf:/opt/spire/conf/server/server.conf:ro
+      - server-data:/opt/spire/data/server
+
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.15.1
+    # JOIN_TOKEN is injected by deploy/run.sh after it asks the server for a token.
+    command: ["-config", "/opt/spire/conf/agent/agent.conf", "-joinToken", "${JOIN_TOKEN:-}"]
+    user: "0:0"        # demo: own the data volume + create a world-connectable socket
+    pid: "host"        # unix WorkloadAttestor resolves caller PIDs in the host namespace
+    depends_on: [spire-server]
+    volumes:
+      - ./spire/agent/agent.conf:/opt/spire/conf/agent/agent.conf:ro
+      - agent-data:/opt/spire/data/agent
+      - wlapi:/run/spire
+
+  pdp:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: ["/app/pdp"]
+    hostname: pdp
+    environment:
+      PDP_ADDR: ":8080"
+      PDP_TOKEN_SECRET: "compose-demo-secret"
+
+  wallet:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: ["/app/wallet"]
+    hostname: wallet
+    user: "10001:10001"
+    depends_on: [spire-agent, pdp]
+    environment:
+      WALLET_ADDR: ":8082"
+      PDP_URL: "http://pdp:8080"
+      PDP_TOKEN_SECRET: "compose-demo-secret"
+      SPIFFE_ENDPOINT_SOCKET: "unix:///run/spire/agent.sock"
+      SVID_TRUST_DOMAIN: "vsp.local"
+    volumes:
+      - wlapi:/run/spire
+
+  multibill:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: ["/app/multibill"]
+    hostname: multibill
+    user: "10002:10002"
+    depends_on: [spire-agent, wallet]
+    environment:
+      MULTIBILL_ADDR: ":8081"
+      WALLET_URL: "https://wallet:8082"
+      SPIFFE_ENDPOINT_SOCKET: "unix:///run/spire/agent.sock"
+      SVID_TRUST_DOMAIN: "vsp.local"
+    volumes:
+      - wlapi:/run/spire
+
+  gateway:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: ["/app/gateway"]
+    hostname: gateway
+    user: "10003:10003"
+    depends_on: [spire-agent, multibill, pdp]
+    ports: ["8088:8088"]
+    environment:
+      GATEWAY_ADDR: ":8088"
+      PDP_URL: "http://pdp:8080"
+      MULTIBILL_URL: "https://multibill:8081"
+      SPIFFE_ENDPOINT_SOCKET: "unix:///run/spire/agent.sock"
+      SVID_TRUST_DOMAIN: "vsp.local"
+    volumes:
+      - wlapi:/run/spire
