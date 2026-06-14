@@ -140,7 +140,30 @@ cd deploy && ./run.sh
 docker compose -f deploy/compose.yaml exec spire-server /opt/spire/bin/spire-server entry show
 ```
 
-> **Mock vs thật giờ:** OPA, mTLS+SVID, **SPIRE control-plane (server/agent + Workload API + attestation + rotation)**, gRPC, decision token — đều thật. Còn mock: `join_token` thay node attestor production (k8s_psat/aws_iid), IdP/PolicyStore vẫn interface; SPIRE chạy `insecure_bootstrap` + keys in-memory (demo-grade).
+> **Mock vs thật (sau M7):** OPA, mTLS+SVID, SPIRE control-plane, gRPC, decision token — thật. Node attestation còn dùng `join_token` (demo) — nâng lên production ở M8.
+
+---
+
+## Milestone 8 — Node attestation production + UpstreamAuthority (đã hoàn thành)
+
+Nâng SPIRE từ demo-grade lên production: bỏ `join_token`/`insecure_bootstrap`/keys in-memory.
+
+| Hạng mục | Trước (M7) | Sau (M8) |
+|---|---|---|
+| Node attestation | `join_token` (bearer, single-use, dễ recreate-crash) | **`x509pop`** — agent chứng minh bằng X.509 node cert (ký bởi node-CA), tự attest, `reattestable` |
+| CA gốc | SPIRE self-signed | **UpstreamAuthority `disk`** — SVID chain về **org upstream root CA** |
+| Bootstrap | `insecure_bootstrap = true` | `trust_bundle_path` pin upstream root → verify server bằng mật mã |
+| Signing keys | KeyManager `memory` | KeyManager `disk` (bền qua restart) |
+| PKI | — | `cmd/nodecert` sinh upstream-root + node-CA + agent node cert (key 0600, **không commit**) |
+
+**Đã verify live:**
+- Agent ID = `spiffe://vsp.local/spire/agent/x509pop/<fingerprint>`, log `Node attestation was successful … x509pop` (không token).
+- `spire-server bundle show` == **VSP Upstream Root CA** → mọi SVID chain về root tổ chức.
+- Toàn bộ flow bubble-up + retry + low-value vẫn đúng cả 3 ca; code Go không đổi.
+
+`run.sh` giờ đơn giản hơn hẳn: sinh PKI → server → agent (tự attest) → entries → workloads (hết màn xoay token).
+
+> **Mock vs thật (sau M8):** OPA, mTLS+SVID, **SPIRE production (x509pop + UpstreamAuthority + keys bền)**, gRPC, decision token — đều thật. Còn lại: `x509pop` phù hợp on-prem/VM; cloud-native sẽ dùng `k8s_psat`/`aws_iid`. UpstreamAuthority `disk` đọc root từ file — production thường dùng Vault/AWS-PCA. IdP/PolicyStore vẫn interface+mock.
 
 ---
 
@@ -218,7 +241,8 @@ cmd/
   gateway/           # Edge PEP / API Gateway (profile=edge)
   multibill/         # Multi-Bill workload (delegation + bubble-up; mTLS client)
   wallet/            # VSP Wallet workload + East-West PEP (profile=east_west; mTLS server)
-  svidmint/          # cấp CA + SVID ra disk (stand-in cho SPIRE)
+  svidmint/          # cấp CA + SVID ra disk (stand-in nhẹ cho SPIRE — dùng ở demo dev)
+  nodecert/          # sinh PKI production: upstream root + node CA + agent node cert (x509pop)
 internal/
   authzen/           # VSP Standard Contract (types) + validation naming-convention
   api/               # AuthZEN 1.0 HTTP facade
@@ -262,7 +286,8 @@ policies/            # OPA bundle (embed vào binary)
 - [x] ~~**Decision token re-use**~~ — PEP fast-path, ràng digest, sống sót PDP outage (M5).
 - [x] ~~**Protobuf/gRPC contract**~~ — `AccessEvaluation.Evaluate`, client drop-in cho PEP (M6).
 - [x] ~~**SPIRE daemon thật**~~ — spire-server/agent qua docker-compose, SVID qua Workload API (M7).
-- [ ] **Node attestor production** thay `join_token` (k8s_psat/aws_iid); UpstreamAuthority + durable KeyManager.
+- [x] ~~**Node attestor production + UpstreamAuthority**~~ — x509pop + UpstreamAuthority disk + keys bền (M8).
+- [ ] **Cloud-native attestor** (`k8s_psat`/`aws_iid`) + UpstreamAuthority Vault/AWS-PCA cho triển khai thật.
 - [ ] **gRPC qua mTLS end-to-end**: PEP dùng `grpcpdp.Client` + creds SVID thay HTTP `pdpclient`.
 - [ ] Wire mock PIP còn lại vào hot path (IdP enrich subject; revocation/posture qua attestor).
 - [ ] **GitOps + immutable S3 bundle store** thật, PDP/PEP pull bundle (§5.3) — thay cho embed.

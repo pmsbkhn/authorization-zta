@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # Bring up the full VSP mesh on a real SPIRE deployment and drive the demo flow.
 #
-# Order matters: the SPIRE agent needs a one-time join token, and the workloads
-# block on the Workload API until their registration entries exist — so we issue
-# the token, attest the agent, register entries, THEN start the workloads. The
-# agent is started once and kept intact (--no-recreate); JOIN_TOKEN stays
-# exported so compose never sees command drift and recreates it with an empty
-# token.
+# Production-grade SPIRE (M8): the agent attests with an X.509 node cert
+# (x509pop) — no join token — and SVIDs chain to an org upstream root CA. The
+# workloads still block on the Workload API until their registration entries
+# exist, so we attest the agent, register entries, THEN start the workloads.
 #
 # Reset with: docker compose -f deploy/compose.yaml down -v
 set -euo pipefail
@@ -15,13 +13,14 @@ cd "$(dirname "$0")"
 TD=vsp.local
 SS() { docker compose exec -T spire-server /opt/spire/bin/spire-server "$@"; }
 
+echo "==> Generating PKI (upstream root, node CA, agent node cert)"
+[ -f spire/certs/agent-svid.crt ] || (cd .. && go run ./cmd/nodecert -out deploy/spire/certs)
+
 echo "==> Starting SPIRE server"
 docker compose up -d spire-server
 until SS healthcheck >/dev/null 2>&1; do sleep 1; done
 
-echo "==> Issuing join token and starting SPIRE agent"
-export JOIN_TOKEN
-JOIN_TOKEN=$(SS token generate -spiffeID "spiffe://$TD/agent" 2>/dev/null | sed -n 's/^Token: //p' | tr -d '\r ')
+echo "==> Starting SPIRE agent (x509pop auto-attestation)"
 docker compose up -d spire-agent
 until SS agent list 2>/dev/null | grep -q 'spiffe://'; do sleep 1; done
 AGENT_ID=$(SS agent list 2>/dev/null | sed -n 's/^SPIFFE ID *: *//p' | head -1 | tr -d '\r ')
