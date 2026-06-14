@@ -34,12 +34,22 @@ type Config struct {
 	// (X-Decision-Token) and short-circuit the PDP call for an identical request
 	// within the token's TTL. Leave nil to always call the PDP.
 	TokenVerifier TokenVerifier
+	// Revocations, when set, is consulted before any allow path (including the
+	// decision-token fast-path): a revoked subject is denied immediately, which
+	// is how CAEP signals override still-valid cached decisions (design-v3 §6.2).
+	Revocations RevocationChecker
 }
 
 // TokenVerifier verifies a decision token string and returns its claims.
 // token.Issuer satisfies it.
 type TokenVerifier interface {
 	Verify(tok string) (token.Claims, error)
+}
+
+// RevocationChecker reports whether a subject's session has been revoked.
+// caep.RevocationCache satisfies it.
+type RevocationChecker interface {
+	IsRevoked(subject string) bool
 }
 
 // PEP enforces a single profile's policy on inbound requests.
@@ -92,6 +102,15 @@ func (p *PEP) Check(r *http.Request) Outcome {
 	route, ok := p.matchRoute(r.Method, r.URL.Path)
 	if !ok {
 		return Outcome{Kind: DenyRoute, ReasonCode: "l1_route_not_permitted", CorrelationID: cid}
+	}
+
+	// Continuous evaluation: a CAEP-signalled revocation denies immediately,
+	// before the decision-token fast-path or the PDP — closing the cached-
+	// decision window (design-v3 §6.2).
+	if p.cfg.Revocations != nil {
+		if subj := r.Header.Get(HeaderSubjectID); subj != "" && p.cfg.Revocations.IsRevoked(subj) {
+			return Outcome{Kind: DenyForbidden, ReasonCode: "session_revoked", CorrelationID: cid}
+		}
 	}
 
 	// L2 — resource/action. Build the AuthZEN request.

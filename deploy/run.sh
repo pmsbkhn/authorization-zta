@@ -56,4 +56,10 @@ pay AAL3 9000000
 echo "3) Low-value (1,000,000) at AAL2 → expect 200 settled"
 pay AAL2 1000000
 echo
+echo "4) CAEP: push session-revoked for u-1 to the wallet PEP, then settle"
+docker compose exec -T wallet /app/caepemit -subject u-1 https://localhost:8082/events >/dev/null 2>&1 || true
+echo -n "   after revoke (expect 403 session_revoked): "; pay AAL3 1000000
+docker compose exec -T wallet /app/caepemit -type session-restored -subject u-1 https://localhost:8082/events >/dev/null 2>&1 || true
+echo -n "   after restore (expect 200 settled):        "; pay AAL3 1000000
+echo
 echo "==> Done. Inspect SVIDs: docker compose -f deploy/compose.yaml exec spire-server /opt/spire/bin/spire-server entry show"

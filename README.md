@@ -201,6 +201,23 @@ S3_ENDPOINT=localhost:9000 go run ./cmd/pdp                     # PDP pulls bund
 
 ---
 
+## Milestone 11 — CAEP push revocation/posture (đã hoàn thành)
+
+Vòng **CAEP/SSF**: Control Plane đẩy Security Event Token (SET) thu hồi session tới PEP; PEP **deny ngay**, đè lên decision token còn hạn (đóng khe hở của quyết định đã cache, §6.2).
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| SET (`internal/caep`) | token ký HS256 (kiểu RFC 8417): `session-revoked`/`session-restored`; tamper/forge bị từ chối | ✅ |
+| Transmitter / Receiver | Control Plane ký + push; PEP `POST /events` verify + cập nhật `RevocationCache` | ✅ |
+| PEP enforcement | `Check` kiểm revocation **trước** fast-path token & PDP → subject bị thu hồi = deny `session_revoked` | ✅ |
+| `cmd/caepemit` | tool admin đẩy SET; push qua **mTLS** bằng SVID khi có Workload API | ✅ |
+| Test | sign/verify, push→cache, **revocation đè token hợp lệ**, và E2E xuyên chain | ✅ |
+| Live trên SPIRE | `caepemit` (trong container, SVID riêng) push qua mTLS → settle **403 session_revoked**; restore → **200** | ✅ |
+
+> **Mock vs thật (sau M11):** thêm **CAEP push revocation thật** (mTLS). Còn lại: UpstreamAuthority Vault (M12), cloud attestor k8s_psat (M13), ReBAC (M14); IdP vẫn interface+mock.
+
+---
+
 ## Yêu cầu
 
 - **Go** ≥ 1.22 (dùng method-based routing của `net/http.ServeMux`). Đã test với 1.26.
@@ -325,7 +342,7 @@ policies/            # OPA bundle (embed vào binary)
 - [ ] **gRPC qua mTLS end-to-end**: PEP dùng `grpcpdp.Client` + creds SVID thay HTTP `pdpclient`.
 - [ ] Wire mock PIP còn lại vào hot path (IdP enrich subject; revocation/posture qua attestor).
 - [ ] **GitOps + immutable S3 bundle store** thật, PDP/PEP pull bundle (§5.3) — thay cho embed.
-- [ ] **Dynamic Attributes Cache / CAEP** push thu hồi session/posture (§6.2).
-- [ ] **ReBAC/Zanzibar** sau interface `pdp.Engine` (§6.3).
+- [x] ~~**CAEP push thu hồi session/posture**~~ — SET transmitter/receiver + PEP deny tức thì (M11).
+- [ ] **ReBAC/Zanzibar** sau interface `pdp.Engine` (§6.3) — M14.
 - [ ] Asymmetric signing cho decision_token (PDP ký private key, PEP verify public key).
 ```

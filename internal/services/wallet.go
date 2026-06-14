@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pmsbkhn/authorization-zta/internal/authzen"
+	"github.com/pmsbkhn/authorization-zta/internal/caep"
 	"github.com/pmsbkhn/authorization-zta/internal/mock"
 	"github.com/pmsbkhn/authorization-zta/internal/pdpclient"
 	"github.com/pmsbkhn/authorization-zta/internal/pep"
@@ -27,6 +28,10 @@ type WalletConfig struct {
 	// presented X-Decision-Token (HS256 with this secret, matching the PDP) and
 	// skips the PDP for identical requests within the token TTL.
 	TokenSecret []byte
+	// CAEPSecret, when set, enables a CAEP receiver at POST /events: pushed
+	// session-revoked SETs make the PEP deny the subject immediately, overriding
+	// any still-valid decision token.
+	CAEPSecret []byte
 }
 
 // WalletHandler builds the wallet service: POST /settle guarded by an East-West
@@ -46,6 +51,15 @@ func WalletHandler(cfg WalletConfig) http.Handler {
 	if pdpClient == nil {
 		pdpClient = pdpclient.New(cfg.PDPURL)
 	}
+
+	mux := http.NewServeMux()
+	var revocations pep.RevocationChecker
+	if len(cfg.CAEPSecret) > 0 {
+		cache := caep.NewRevocationCache()
+		mux.HandleFunc("POST /events", caep.NewReceiver(caep.NewSigner(cfg.CAEPSecret), cache).Handler())
+		revocations = cache
+	}
+
 	guard := pep.New(pep.Config{
 		Profile:         authzen.ProfileEastWest,
 		PEPID:           "vsp-wallet-sidecar",
@@ -54,6 +68,7 @@ func WalletHandler(cfg WalletConfig) http.Handler {
 		Logger:          cfg.Logger,
 		RequirePeerSVID: cfg.RequirePeerSVID,
 		TokenVerifier:   verifier,
+		Revocations:     revocations,
 		Routes: []pep.Route{{
 			Method:        http.MethodPost,
 			Path:          "/settle",
@@ -63,7 +78,6 @@ func WalletHandler(cfg WalletConfig) http.Handler {
 		}},
 	})
 
-	mux := http.NewServeMux()
 	mux.Handle("POST /settle", guard.Middleware(http.HandlerFunc(settle)))
 	mux.HandleFunc("GET /healthz", okHandler)
 	return mux

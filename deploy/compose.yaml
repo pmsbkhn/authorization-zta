@@ -69,6 +69,7 @@ services:
       PDP_URL: "http://pdp:8080"
       PDP_GRPC_ADDR: "pdp:9090"        # call PDP over gRPC/mTLS
       PDP_TOKEN_SECRET: "compose-demo-secret"
+      CAEP_SECRET: "compose-caep-secret"   # CAEP receiver at POST /events
       SPIFFE_ENDPOINT_SOCKET: "unix:///run/spire/agent.sock"
       SVID_TRUST_DOMAIN: "vsp.local"
     volumes:

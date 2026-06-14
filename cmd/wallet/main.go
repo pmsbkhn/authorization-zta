@@ -35,6 +35,10 @@ func main() {
 		RequirePeerSVID: mtls,
 		TokenSecret:     []byte(envOr("PDP_TOKEN_SECRET", "dev-insecure-secret-change-me")),
 	}
+	if s := os.Getenv("CAEP_SECRET"); s != "" {
+		wcfg.CAEPSecret = []byte(s)
+		log.Info("CAEP receiver enabled at POST /events")
+	}
 	// Prefer gRPC-over-mTLS to the PDP when configured.
 	if grpcAddr := os.Getenv("PDP_GRPC_ADDR"); grpcAddr != "" {
 		c, err := services.PDPGRPCClient(grpcAddr)

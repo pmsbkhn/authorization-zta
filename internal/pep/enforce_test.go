@@ -91,6 +91,35 @@ func TestDecisionToken_SkipsPDPOnReuse(t *testing.T) {
 	}
 }
 
+// revoker is a trivial RevocationChecker for tests.
+type revoker map[string]bool
+
+func (r revoker) IsRevoked(subject string) bool { return r[subject] }
+
+// A CAEP revocation must deny even when a valid decision token is presented —
+// continuous evaluation overrides the cached-decision fast-path (§6.2).
+func TestRevocation_OverridesValidToken(t *testing.T) {
+	iss := token.NewIssuer([]byte("s"), 5*time.Minute)
+	pdp := &countingPDP{}
+	rev := revoker{}
+	p := New(Config{
+		Profile: authzen.ProfileEdge, PEPID: "test-edge", PDP: pdp,
+		TokenVerifier: iss, Revocations: rev,
+		Routes: []Route{{Method: "POST", Path: "/pay", Action: "bill:pay", ResourceType: "bill:invoice", ResourceProps: []string{"amount", "currency"}}},
+	})
+
+	tok := mintFor(t, iss, 1_000_000)
+	if out := doCheck(p, tok, 1_000_000); out.Kind != Allow {
+		t.Fatalf("precondition: expected fast-path allow, got %v", out.Kind)
+	}
+
+	rev["u-1"] = true // CAEP session-revoked arrives
+	out := doCheck(p, tok, 1_000_000)
+	if out.Kind != DenyForbidden || out.ReasonCode != "session_revoked" {
+		t.Fatalf("revoked subject must be denied; got kind=%v reason=%q", out.Kind, out.ReasonCode)
+	}
+}
+
 func TestDecisionToken_RejectedWhenAttributesChange(t *testing.T) {
 	iss := token.NewIssuer([]byte("s"), 5*time.Minute)
 	pdp := &countingPDP{}

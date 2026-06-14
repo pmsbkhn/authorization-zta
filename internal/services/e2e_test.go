@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pmsbkhn/authorization-zta/internal/caep"
 	"github.com/pmsbkhn/authorization-zta/internal/mock"
 	"github.com/pmsbkhn/authorization-zta/internal/pep"
 	"github.com/pmsbkhn/authorization-zta/internal/services"
@@ -149,6 +150,59 @@ func TestE2E_DecisionTokenReuseSurvivesPDPOutage(t *testing.T) {
 		t.Fatal("a non-cached settlement must not succeed while the PDP is down")
 	} else {
 		resp.Body.Close()
+	}
+}
+
+// CAEP continuous evaluation: after a session-revoked SET is pushed to the
+// wallet's PEP, settlements for that subject are denied — even though the
+// payment previously succeeded and a decision token would otherwise let it
+// through (design-v3 §6.2).
+func TestE2E_CAEPRevocationDeniesThroughChain(t *testing.T) {
+	secret := []byte("test")
+	caepSecret := []byte("caep-test")
+
+	pdpH, err := services.PDPHandler(context.Background(), services.PDPConfig{TokenSecret: secret})
+	if err != nil {
+		t.Fatalf("pdp: %v", err)
+	}
+	pdp := httptest.NewServer(pdpH.Routes())
+	t.Cleanup(pdp.Close)
+
+	wallet := httptest.NewServer(services.WalletHandler(services.WalletConfig{
+		PDPURL:      pdp.URL,
+		TokenSecret: secret,
+		CAEPSecret:  caepSecret,
+	}))
+	t.Cleanup(wallet.Close)
+
+	mb := httptest.NewServer(services.MultibillHandler(services.MultibillConfig{
+		WalletURL:  wallet.URL,
+		SelfSpiffe: "spiffe://vsp.local/ns/billing/sa/multi-bill-svc",
+	}))
+	t.Cleanup(mb.Close)
+
+	gwH, _ := services.GatewayHandler(services.GatewayConfig{PDPURL: pdp.URL, UpstreamURL: mb.URL})
+	gw := httptest.NewServer(gwH)
+	t.Cleanup(gw.Close)
+
+	// Before revocation: settles fine.
+	if resp := pay(t, gw.URL, "AAL3", 9_000_000); resp.StatusCode != http.StatusOK {
+		t.Fatalf("pre-revocation settle: expected 200, got %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	// Push a session-revoked SET to the wallet PEP.
+	tx := caep.NewTransmitter(caep.NewSigner(caepSecret), []string{wallet.URL + "/events"})
+	if err := tx.Emit(context.Background(), caep.Event{Type: caep.EventSessionRevoked, Subject: "u-1"}); err != nil {
+		t.Fatalf("emit revocation: %v", err)
+	}
+
+	// After revocation: denied deep in the wallet, surfaced as 403.
+	resp := pay(t, gw.URL, "AAL3", 9_000_000)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("post-revocation settle: expected 403, got %d", resp.StatusCode)
 	}
 }
 
