@@ -21,9 +21,20 @@ func main() {
 	upstreamURL := envOr("MULTIBILL_URL", "http://localhost:8081")
 	addr := envOr("GATEWAY_ADDR", ":8088")
 
+	// The gateway is the mTLS client to Multi-Bill (it presents its own SVID).
+	upstreamTLS, mtls, err := services.LoadClientTLS()
+	if err != nil {
+		log.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+	if mtls {
+		log.Info("gateway → multibill over mTLS", "upstream", upstreamURL)
+	}
+
 	handler, err := services.GatewayHandler(services.GatewayConfig{
 		PDPURL:      pdpURL,
 		UpstreamURL: upstreamURL,
+		UpstreamTLS: upstreamTLS, // nil in dev mode → plain HTTP
 		Logger:      log,
 	})
 	if err != nil {

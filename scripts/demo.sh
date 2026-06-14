@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# End-to-end demo of the cross-PEP bubble-up step-up flow (design-v3 §4) with the
-# East-West hop secured by real mTLS / SPIFFE X509-SVID (L0, §2).
+# End-to-end demo of the cross-PEP bubble-up step-up flow (design-v3 §4) with
+# BOTH internal hops secured by real mTLS / SPIFFE X509-SVID (L0, §2).
 #
-#   client → gateway(:8088, Edge PEP) ──http──> multibill(:8081)
-#                                                    │ mTLS (SVID)
-#                                                    ▼
-#                                          wallet(:8082, East-West PEP) ──> pdp(:8080)
+#   client ──http──> gateway(:8088, Edge PEP)
+#                        │ mTLS (SVID)
+#                        ▼
+#                    multibill(:8081)
+#                        │ mTLS (SVID)
+#                        ▼
+#                    wallet(:8082, East-West PEP) ──> pdp(:8080)
 #
 # svidmint stands in for SPIRE: it issues the trust bundle + per-workload SVIDs.
+# (A real SPIRE agent would be used by setting SPIFFE_ENDPOINT_SOCKET instead.)
 # Usage: ./scripts/demo.sh
 set -euo pipefail
 set +m # quiet job-control notifications
@@ -30,15 +34,13 @@ echo "==> Building binaries"
 for c in pdp wallet multibill gateway svidmint; do go build -o "$BIN/$c" "./cmd/$c"; done
 
 echo "==> Minting SPIFFE SVIDs (svidmint = stand-in for SPIRE)"
-"$BIN/svidmint" -out "$CERTS" \
-  "wallet=spiffe://vsp.local/ns/wallet/sa/vsp-wallet-svc" \
-  "multibill=spiffe://vsp.local/ns/billing/sa/multi-bill-svc"
+"$BIN/svidmint" -out "$CERTS"   # default entries: gateway, multibill, wallet
 
 echo "==> Starting services"
 PDP_ADDR="$PDP_ADDR" "$BIN/pdp" >/tmp/zta-pdp.log 2>&1 & PIDS+=($!)
 PDP_URL="http://localhost${PDP_ADDR}"
 
-# Wallet serves mTLS using its SVID; multibill calls it with its own SVID.
+# Wallet: mTLS server. multibill: mTLS server (for gateway) + mTLS client (to wallet).
 WALLET_ADDR="$WALLET_ADDR" PDP_URL="$PDP_URL" \
   SVID_BUNDLE="$CERTS/ca.pem" SVID_CERT="$CERTS/wallet.crt" SVID_KEY="$CERTS/wallet.key" \
   "$BIN/wallet" >/tmp/zta-wallet.log 2>&1 & PIDS+=($!)
@@ -47,9 +49,11 @@ WALLET_URL="https://localhost${WALLET_ADDR}"
 MULTIBILL_ADDR="$MULTIBILL_ADDR" WALLET_URL="$WALLET_URL" \
   SVID_BUNDLE="$CERTS/ca.pem" SVID_CERT="$CERTS/multibill.crt" SVID_KEY="$CERTS/multibill.key" \
   "$BIN/multibill" >/tmp/zta-multibill.log 2>&1 & PIDS+=($!)
-MULTIBILL_URL="http://localhost${MULTIBILL_ADDR}"
+MULTIBILL_URL="https://localhost${MULTIBILL_ADDR}"
 
+# Gateway: mTLS client to multibill (presents its own SVID); plain HTTP to users.
 GATEWAY_ADDR="$GATEWAY_ADDR" PDP_URL="$PDP_URL" MULTIBILL_URL="$MULTIBILL_URL" \
+  SVID_BUNDLE="$CERTS/ca.pem" SVID_CERT="$CERTS/gateway.crt" SVID_KEY="$CERTS/gateway.key" \
   "$BIN/gateway" >/tmp/zta-gateway.log 2>&1 & PIDS+=($!)
 GW="http://localhost${GATEWAY_ADDR}"
 

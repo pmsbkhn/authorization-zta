@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/pmsbkhn/authorization-zta/internal/authzen"
 	"github.com/pmsbkhn/authorization-zta/internal/mock"
 	"github.com/pmsbkhn/authorization-zta/internal/pdpclient"
 	"github.com/pmsbkhn/authorization-zta/internal/pep"
+	"github.com/pmsbkhn/authorization-zta/internal/token"
 )
 
 // WalletConfig configures the VSP Wallet workload + its East-West PEP.
@@ -20,6 +22,10 @@ type WalletConfig struct {
 	// certificate (set when the wallet is served over mTLS). When false, the
 	// X-Vsp-Caller-Spiffe header stands in (dev mode).
 	RequirePeerSVID bool
+	// TokenSecret, when set, enables decision-token re-use: the PEP verifies a
+	// presented X-Decision-Token (HS256 with this secret, matching the PDP) and
+	// skips the PDP for identical requests within the token TTL.
+	TokenSecret []byte
 }
 
 // WalletHandler builds the wallet service: POST /settle guarded by an East-West
@@ -30,6 +36,11 @@ func WalletHandler(cfg WalletConfig) http.Handler {
 	if attestor == nil {
 		attestor = &mock.WorkloadAttestor{Revoked: map[string]bool{}}
 	}
+	var verifier pep.TokenVerifier
+	if len(cfg.TokenSecret) > 0 {
+		// TTL here is unused for verification (Verify reads exp from the token).
+		verifier = token.NewIssuer(cfg.TokenSecret, time.Minute)
+	}
 	guard := pep.New(pep.Config{
 		Profile:         authzen.ProfileEastWest,
 		PEPID:           "vsp-wallet-sidecar",
@@ -37,6 +48,7 @@ func WalletHandler(cfg WalletConfig) http.Handler {
 		Attestor:        attestor,
 		Logger:          cfg.Logger,
 		RequirePeerSVID: cfg.RequirePeerSVID,
+		TokenVerifier:   verifier,
 		Routes: []pep.Route{{
 			Method:        http.MethodPost,
 			Path:          "/settle",

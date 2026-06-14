@@ -101,6 +101,57 @@ func TestE2E_BubbleUpStepUpThenRetrySucceeds(t *testing.T) {
 	}
 }
 
+// Decision-token re-use: after the wallet allows a settlement once, multibill
+// caches the decision token and replays it on an identical follow-up. We prove
+// the PDP is genuinely bypassed by taking the PDP offline between calls: the
+// repeat still settles (fast-path), while a *different* amount fails (it must
+// consult the now-dead PDP). Direct multibill→wallet path isolates the hop.
+func TestE2E_DecisionTokenReuseSurvivesPDPOutage(t *testing.T) {
+	secret := []byte("test")
+	pdpH, err := services.PDPHandler(context.Background(), services.PDPConfig{TokenSecret: secret})
+	if err != nil {
+		t.Fatalf("pdp: %v", err)
+	}
+	pdp := httptest.NewServer(pdpH.Routes())
+
+	wallet := httptest.NewServer(services.WalletHandler(services.WalletConfig{
+		PDPURL:      pdp.URL,
+		TokenSecret: secret, // same secret as PDP → PEP can verify decision tokens
+	}))
+	t.Cleanup(wallet.Close)
+
+	mb := httptest.NewServer(services.MultibillHandler(services.MultibillConfig{
+		WalletURL:           wallet.URL,
+		SelfSpiffe:          "spiffe://vsp.local/ns/billing/sa/multi-bill-svc", // dev header L0
+		CacheDecisionTokens: true,
+	}))
+	t.Cleanup(mb.Close)
+
+	// 1) PDP up: settles and caches the decision token.
+	if resp := pay(t, mb.URL, "AAL3", 9_000_000); resp.StatusCode != http.StatusOK {
+		t.Fatalf("first settle: expected 200, got %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	// PDP outage.
+	pdp.Close()
+
+	// 2) Identical settle survives via the cached token (no PDP needed).
+	if resp := pay(t, mb.URL, "AAL3", 9_000_000); resp.StatusCode != http.StatusOK {
+		t.Fatalf("repeat settle should survive PDP outage via token re-use, got %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	// 3) A different amount has no cached token, must consult the dead PDP → fails.
+	if resp := pay(t, mb.URL, "AAL3", 1_000_000); resp.StatusCode == http.StatusOK {
+		t.Fatal("a non-cached settlement must not succeed while the PDP is down")
+	} else {
+		resp.Body.Close()
+	}
+}
+
 // A low-value payment needs no step-up: AAL2 settles directly.
 func TestE2E_LowValueDirectAllow(t *testing.T) {
 	gw := chain(t, services.WalletConfig{})

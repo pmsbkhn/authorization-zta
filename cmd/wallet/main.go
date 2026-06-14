@@ -33,6 +33,7 @@ func main() {
 		PDPURL:          pdpURL,
 		Logger:          log,
 		RequirePeerSVID: mtls,
+		TokenSecret:     []byte(envOr("PDP_TOKEN_SECRET", "dev-insecure-secret-change-me")),
 	})
 
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}

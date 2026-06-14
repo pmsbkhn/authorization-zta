@@ -1,8 +1,8 @@
-// Command multibill is the Multi-Bill workload. POST /pay settles via the VSP
-// Wallet over the East-West hop. When SVID_* env is present it calls the wallet
-// over mTLS, presenting its own X509-SVID — the wallet derives the delegation
-// actor from that verified certificate. Otherwise it falls back to stamping the
-// X-Vsp-Caller-Spiffe header (dev mode).
+// Command multibill is the Multi-Bill workload. It is both an mTLS server (the
+// gateway authenticates to it) and an mTLS client (it authenticates to the
+// wallet). POST /pay settles via the VSP Wallet over the East-West hop; the
+// wallet derives the delegation actor from multibill's verified client cert.
+// Without SVID_* / SPIFFE_ENDPOINT_SOCKET it runs plain HTTP in dev mode.
 package main
 
 import (
@@ -22,7 +22,12 @@ func main() {
 	selfSpiffe := envOr("MULTIBILL_SPIFFE", "spiffe://vsp.local/ns/billing/sa/multi-bill-svc")
 	addr := envOr("MULTIBILL_ADDR", ":8081")
 
-	tlsCfg, mtls, err := services.LoadClientTLS()
+	serverTLS, serverMTLS, err := services.LoadServerTLS()
+	if err != nil {
+		log.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+	clientTLS, clientMTLS, err := services.LoadClientTLS()
 	if err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
@@ -30,20 +35,24 @@ func main() {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	cfg := services.MultibillConfig{WalletURL: walletURL, SelfSpiffe: selfSpiffe, Logger: log, HTTPClient: client}
-	if mtls {
-		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
-		// Workload identity now travels in the client certificate, not a header.
-		cfg.SelfSpiffe = ""
-		log.Info("multibill calling wallet over mTLS", "wallet", walletURL)
+	if clientMTLS {
+		client.Transport = &http.Transport{TLSClientConfig: clientTLS}
+		cfg.SelfSpiffe = "" // identity travels in the client certificate, not a header
+		log.Info("multibill → wallet over mTLS", "wallet", walletURL)
 	} else {
-		log.Warn("multibill calling wallet over PLAIN HTTP (dev mode)", "wallet", walletURL, "spiffe", selfSpiffe)
+		log.Warn("multibill → wallet over PLAIN HTTP (dev mode)", "wallet", walletURL, "spiffe", selfSpiffe)
 	}
 
-	handler := services.MultibillHandler(cfg)
-
-	log.Info("multibill listening", "addr", addr)
-	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	srv := &http.Server{Addr: addr, Handler: services.MultibillHandler(cfg), ReadHeaderTimeout: 5 * time.Second}
+	if serverMTLS {
+		srv.TLSConfig = serverTLS
+		log.Info("multibill listening (mTLS)", "addr", addr)
+		err = srv.ListenAndServeTLS("", "")
+	} else {
+		log.Info("multibill listening (plain)", "addr", addr)
+		err = srv.ListenAndServe()
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
 	}

@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -18,7 +19,8 @@ import (
 // GatewayConfig configures the Edge PEP / API Gateway.
 type GatewayConfig struct {
 	PDPURL      string
-	UpstreamURL string // Multi-Bill
+	UpstreamURL string      // Multi-Bill
+	UpstreamTLS *tls.Config // when set, the gateway calls Multi-Bill over mTLS
 	Logger      *slog.Logger
 }
 
@@ -36,6 +38,11 @@ func GatewayHandler(cfg GatewayConfig) (http.Handler, error) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	if cfg.UpstreamTLS != nil {
+		// Present the gateway's SVID to Multi-Bill and verify its SVID — the
+		// gateway→multibill hop is mutually authenticated too.
+		proxy.Transport = &http.Transport{TLSClientConfig: cfg.UpstreamTLS}
+	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		acr := resp.Header.Get(pep.HeaderStepUpRequired)
 		if acr == "" {

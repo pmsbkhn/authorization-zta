@@ -75,6 +75,28 @@ Phạm vi M3: thay header propagation bằng **mutual TLS thật** với **SPIFF
 
 ---
 
+## Milestone 4 — SVID rotation, SPIRE-ready, mTLS mọi chặng nội bộ (đã hoàn thành)
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| Source abstraction (`internal/spiffe`) | `Source` triển khai `x509svid.Source`+`x509bundle.Source`; `tls.Config` đọc SVID mới mỗi handshake | ✅ |
+| **SVID rotation** | `CA.RotatingSource` re-mint SVID theo chu kỳ (mô phỏng SPIRE rotation); unit test xác nhận SVID đổi | ✅ |
+| **SPIRE-ready** | Có `SPIFFE_ENDPOINT_SOCKET` → dùng `workloadapi.X509Source` (SPIRE agent thật); không có → fallback file/rotating | ✅ |
+| **mTLS cả 2 chặng** | `gateway → multibill` cũng mTLS (gateway trình SVID, multibill verify); E2E `BothHopsSecured` | ✅ |
+
+## Milestone 5 — Decision token re-use (PEP fast-path) (đã hoàn thành)
+
+PEP sâu chấp nhận `X-Decision-Token` hợp lệ và **bỏ qua PDP** cho request giống hệt trong TTL.
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| Token binding an toàn | Token ràng `subject+action+resource+aal+**digest(resource.properties)**` — token low-value **không** dùng được cho high-value | ✅ |
+| PEP fast-path | `Check` verify token trước L2; khớp tuple + digest + AAL ≥ → Allow, không gọi PDP; sai → fallback PDP (không bao giờ allow ngầm) | ✅ |
+| Token propagation | PEP echo token qua response header; Multi-Bill cache theo tuple + replay | ✅ |
+| Chứng minh end-to-end | E2E: settle lần 1 (PDP up) → **tắt PDP** → settle giống hệt vẫn 200 (fast-path); amount khác → fail | ✅ |
+
+---
+
 ## Yêu cầu
 
 - **Go** ≥ 1.22 (dùng method-based routing của `net/http.ServeMux`). Đã test với 1.26.

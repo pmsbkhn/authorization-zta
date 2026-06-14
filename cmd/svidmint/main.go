@@ -31,8 +31,9 @@ func main() {
 	if len(entries) == 0 {
 		// Sensible defaults for the demo topology.
 		entries = []string{
-			"wallet=spiffe://" + *trustDomain + "/ns/wallet/sa/vsp-wallet-svc",
+			"gateway=spiffe://" + *trustDomain + "/ns/edge/sa/api-gateway",
 			"multibill=spiffe://" + *trustDomain + "/ns/billing/sa/multi-bill-svc",
+			"wallet=spiffe://" + *trustDomain + "/ns/wallet/sa/vsp-wallet-svc",
 		}
 	}
 

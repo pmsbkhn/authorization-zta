@@ -22,14 +22,33 @@ import (
 // Claims is the verifiable payload of a decision token. It binds the token to the
 // exact subject/action/resource tuple and assurance level that was authorized, so
 // it cannot be replayed against a different request.
+//
+// ResDigest binds the decision-relevant resource attributes (e.g. amount,
+// currency) so a token issued for a low-value settle cannot be replayed to
+// authorize a high-value one: any change to the properties changes the digest and
+// invalidates the token for fast-path reuse.
 type Claims struct {
 	Subject       string `json:"sub"`
 	Action        string `json:"act"`
 	Resource      string `json:"res"`
 	AAL           string `json:"aal"`
+	ResDigest     string `json:"rd,omitempty"`
 	CorrelationID string `json:"cid,omitempty"`
 	IssuedAt      int64  `json:"iat"`
 	ExpiresAt     int64  `json:"exp"`
+}
+
+// ResourceDigest returns a stable hash of resource properties. encoding/json
+// sorts map keys, so the encoding (and thus the digest) is deterministic. Both
+// the PDP (when minting) and a PEP (when validating a presented token) compute it
+// the same way.
+func ResourceDigest(props map[string]any) string {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // Issuer mints decision tokens. It is safe for concurrent use.

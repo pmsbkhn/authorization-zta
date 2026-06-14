@@ -68,6 +68,65 @@ func mtlsClient(cfg *tls.Config) *http.Client {
 	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: cfg}}
 }
 
+// startMTLSServer runs handler over real mTLS using serverSVID, returning its
+// https URL. Manual listener (not httptest.StartTLS) so only the SVID cert is
+// presented.
+func startMTLSServer(t *testing.T, ca *spiffe.CA, serverSVID *x509svid.SVID, handler http.Handler) string {
+	t.Helper()
+	srv := &http.Server{Handler: handler, TLSConfig: spiffe.MTLSServerConfig(serverSVID, ca.Bundle())}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = srv.ServeTLS(ln, "", "") }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return "https://" + ln.Addr().String()
+}
+
+// Full two-hop mTLS: gateway→multibill AND multibill→wallet are both mutually
+// authenticated with SPIFFE SVIDs. The user-facing edge stays plain HTTP.
+func TestE2E_MTLS_BothHopsSecured(t *testing.T) {
+	ca, _ := spiffe.NewCA("vsp.local")
+	gwSVID, _ := ca.Mint("spiffe://vsp.local/ns/edge/sa/api-gateway")
+	mbSVID, _ := ca.Mint(multibillID)
+	walletSVID, _ := ca.Mint(walletID)
+
+	pdpH, _ := services.PDPHandler(context.Background(), services.PDPConfig{TokenSecret: []byte("test")})
+	pdp := httptest.NewServer(pdpH.Routes())
+	t.Cleanup(pdp.Close)
+
+	walletURL := startMTLSServer(t, ca, walletSVID,
+		services.WalletHandler(services.WalletConfig{PDPURL: pdp.URL, RequirePeerSVID: true}))
+
+	// multibill is an mTLS server (to the gateway) and an mTLS client (to wallet).
+	mbURL := startMTLSServer(t, ca, mbSVID, services.MultibillHandler(services.MultibillConfig{
+		WalletURL:  walletURL,
+		SelfSpiffe: "",
+		HTTPClient: mtlsClient(spiffe.MTLSClientConfig(mbSVID, ca.Bundle())),
+	}))
+
+	gwH, _ := services.GatewayHandler(services.GatewayConfig{
+		PDPURL:      pdp.URL,
+		UpstreamURL: mbURL, // https
+		UpstreamTLS: spiffe.MTLSClientConfig(gwSVID, ca.Bundle()),
+	})
+	gw := httptest.NewServer(gwH)
+	t.Cleanup(gw.Close)
+
+	if resp := pay(t, gw.URL, "AAL2", 9_000_000); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("two-hop mTLS: expected 401 step-up, got %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	resp := pay(t, gw.URL, "AAL3", 9_000_000)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("two-hop mTLS: expected 200 on AAL3 retry, got %d", resp.StatusCode)
+	}
+	if decode(t, resp)["settled"] != true {
+		t.Error("expected settled=true")
+	}
+}
+
 // Happy path over mTLS: the delegation actor reaches the PDP via the verified
 // client certificate (no X-Vsp-Caller-Spiffe header). A high-value payment at
 // AAL2 still bubbles up a step-up; retried at AAL3 it settles. That the AAL2 call

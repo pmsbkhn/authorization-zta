@@ -23,10 +23,13 @@ func (p *PEP) Middleware(next http.Handler) http.Handler {
 
 		switch out.Kind {
 		case Allow:
-			// Propagate identity context + decision token to the workload.
+			// Propagate identity context + decision token to the workload, and
+			// echo the token back to the caller so it can replay it (within the
+			// TTL) to take the PEP's fast-path on an identical follow-up request.
 			r.Header.Set(HeaderCorrelationID, out.CorrelationID)
 			if out.DecisionToken != "" {
 				r.Header.Set(HeaderDecisionToken, out.DecisionToken)
+				w.Header().Set(HeaderDecisionToken, out.DecisionToken)
 			}
 			p.log.Info("pep allow",
 				"profile", string(p.cfg.Profile), "pep", p.cfg.PEPID,

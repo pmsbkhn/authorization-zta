@@ -73,6 +73,7 @@ func (s *Service) assemble(req authzen.Request, dec engine.Decision) (authzen.Re
 			Action:        req.Action.Name,
 			Resource:      req.Resource.Type + "/" + req.Resource.ID,
 			AAL:           req.Subject.AuthAssuranceLevel(),
+			ResDigest:     token.ResourceDigest(req.Resource.Properties),
 			CorrelationID: req.CorrelationID(),
 		})
 		if err != nil {

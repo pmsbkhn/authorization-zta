@@ -12,6 +12,7 @@ import (
 
 	"github.com/pmsbkhn/authorization-zta/internal/authzen"
 	"github.com/pmsbkhn/authorization-zta/internal/pip"
+	"github.com/pmsbkhn/authorization-zta/internal/token"
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 )
 
@@ -29,6 +30,16 @@ type Config struct {
 	// whenever the PEP is served over mTLS (production); leaving it false enables
 	// a dev mode where the header stands in for a missing SVID.
 	RequirePeerSVID bool
+	// TokenVerifier, when set, lets the PEP honor a presented decision token
+	// (X-Decision-Token) and short-circuit the PDP call for an identical request
+	// within the token's TTL. Leave nil to always call the PDP.
+	TokenVerifier TokenVerifier
+}
+
+// TokenVerifier verifies a decision token string and returns its claims.
+// token.Issuer satisfies it.
+type TokenVerifier interface {
+	Verify(tok string) (token.Claims, error)
 }
 
 // PEP enforces a single profile's policy on inbound requests.
@@ -83,11 +94,18 @@ func (p *PEP) Check(r *http.Request) Outcome {
 		return Outcome{Kind: DenyRoute, ReasonCode: "l1_route_not_permitted", CorrelationID: cid}
 	}
 
-	// L2 — resource/action. Build the AuthZEN request and ask the PDP.
+	// L2 — resource/action. Build the AuthZEN request.
 	req, err := p.buildRequest(r, route, cid, caller)
 	if err != nil {
 		return Outcome{Kind: DenyForbidden, ReasonCode: "l2_request_build_failed", CorrelationID: cid}
 	}
+
+	// L2 fast-path: a valid decision token for the *identical* request lets us
+	// skip the PDP round-trip within the token's TTL.
+	if out, ok := p.tryDecisionToken(r, req, cid); ok {
+		return out
+	}
+
 	resp, err := p.cfg.PDP.Evaluate(r.Context(), req)
 	if err != nil {
 		// Fail closed: no clean decision means deny.
@@ -128,6 +146,39 @@ func (p *PEP) classify(resp authzen.Response, cid string) Outcome {
 		rc = resp.Context.ReasonCode
 	}
 	return Outcome{Kind: DenyForbidden, ReasonCode: rc, CorrelationID: cid}
+}
+
+// aalRank orders the assurance levels for "at least" comparisons. Unknown → 0.
+var aalRank = map[string]int{"AAL1": 1, "AAL2": 2, "AAL3": 3}
+
+// tryDecisionToken honors a presented X-Decision-Token if it is valid and binds
+// to exactly this request. The match is deliberately strict: subject, action,
+// resource identity, the resource-properties digest, and an assurance level at
+// least as strong as the token's. Any mismatch (including an expired token)
+// returns ok=false so the caller falls back to a fresh PDP evaluation — never a
+// silent allow.
+func (p *PEP) tryDecisionToken(r *http.Request, req authzen.Request, cid string) (Outcome, bool) {
+	if p.cfg.TokenVerifier == nil {
+		return Outcome{}, false
+	}
+	raw := r.Header.Get(HeaderDecisionToken)
+	if raw == "" {
+		return Outcome{}, false
+	}
+	claims, err := p.cfg.TokenVerifier.Verify(raw)
+	if err != nil {
+		return Outcome{}, false
+	}
+	if claims.Subject != req.Subject.ID ||
+		claims.Action != req.Action.Name ||
+		claims.Resource != req.Resource.Type+"/"+req.Resource.ID ||
+		claims.ResDigest != token.ResourceDigest(req.Resource.Properties) {
+		return Outcome{}, false
+	}
+	if aalRank[req.Subject.AuthAssuranceLevel()] < aalRank[claims.AAL] {
+		return Outcome{}, false
+	}
+	return Outcome{Kind: Allow, ReasonCode: "decision_token_reuse", CorrelationID: cid, DecisionToken: raw}, true
 }
 
 // peerIdentity resolves the calling workload's SPIFFE id. It prefers the mTLS
