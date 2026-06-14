@@ -218,6 +218,24 @@ Vòng **CAEP/SSF**: Control Plane đẩy Security Event Token (SET) thu hồi se
 
 ---
 
+## Milestone 12 — UpstreamAuthority Vault (HashiCorp Vault PKI) (đã hoàn thành)
+
+Thay UpstreamAuthority `disk` bằng **Vault PKI thật**: SPIRE gửi CSR intermediate tới `pki/root/sign-intermediate` của Vault → mọi SVID chain về root do Vault quản lý.
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| Vault PKI | `hashicorp/vault` (dev), enable `pki` + generate root `VSP Vault Root CA` | ✅ |
+| SPIRE config | `server-vault.conf`: `UpstreamAuthority "vault"` (token auth) + x509pop | ✅ |
+| Agent trust bundle | lấy Vault root → `bundle.crt` của agent | ✅ |
+| Verify live | `spire-server bundle show` **trùng pubkey** Vault root → SVID chain về Vault PKI | ✅ |
+
+```bash
+deploy/vault/run-vault.sh    # vault → init PKI → SPIRE(vault upstream) → verify chain
+# Reset: docker compose -f deploy/vault/compose.yaml down -v
+```
+
+---
+
 ## Yêu cầu
 
 - **Go** ≥ 1.22 (dùng method-based routing của `net/http.ServeMux`). Đã test với 1.26.

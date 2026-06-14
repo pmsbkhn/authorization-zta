@@ -1,0 +1,45 @@
+# Focused stack proving UpstreamAuthority "vault": Vault PKI signs SPIRE's
+# intermediate, so SVIDs chain to the Vault-managed root. Run via run-vault.sh
+# (it initializes Vault's PKI and fetches the root for the agent trust bundle).
+name: vsp-vault
+
+volumes:
+  server-data: {}
+  agent-data: {}
+  wlapi: {}
+
+services:
+  vault:
+    image: hashicorp/vault:latest
+    hostname: vault
+    command: ["server", "-dev"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "root"
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    cap_add: [IPC_LOCK]
+    ports: ["8200:8200"]
+
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.15.1
+    command: ["-config", "/opt/spire/conf/server/server.conf"]
+    hostname: spire-server
+    user: "0:0"
+    depends_on: [vault]
+    volumes:
+      - ../spire/server/server-vault.conf:/opt/spire/conf/server/server.conf:ro
+      - ../spire/certs/node-ca.crt:/opt/spire/conf/server/node-ca.crt:ro
+      - server-data:/opt/spire/data/server
+
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.15.1
+    command: ["-config", "/opt/spire/conf/agent/agent.conf"]
+    user: "0:0"
+    pid: "host"
+    depends_on: [spire-server]
+    volumes:
+      - ../spire/agent/agent.conf:/opt/spire/conf/agent/agent.conf:ro
+      - ../spire/certs/agent-svid.crt:/opt/spire/conf/agent/agent-svid.crt:ro
+      - ../spire/certs/agent-svid.key:/opt/spire/conf/agent/agent-svid.key:ro
+      - ../spire/certs/vault-root.crt:/opt/spire/conf/agent/bundle.crt:ro
+      - agent-data:/opt/spire/data/agent
+      - wlapi:/run/spire
