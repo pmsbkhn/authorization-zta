@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/pmsbkhn/authorization-zta/examples/vsp/app"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/pep"
-	"github.com/pmsbkhn/authorization-zta/internal/services"
-	"github.com/pmsbkhn/authorization-zta/internal/signals/caep"
-	"github.com/pmsbkhn/authorization-zta/internal/testsupport/mock"
+	"github.com/pmsbkhn/zta-core/authz/pep"
+	"github.com/pmsbkhn/zta-core/services"
+	"github.com/pmsbkhn/zta-core/signals/caep"
+	"github.com/pmsbkhn/zta-core/testsupport/mock"
 )
 
 // chain wires the whole data path in-process: client → gateway → multibill →

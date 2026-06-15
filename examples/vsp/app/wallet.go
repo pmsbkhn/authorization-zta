@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/pmsbkhn/authorization-zta/internal/authz/authzen"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/pdpclient"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/pep"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/token"
-	"github.com/pmsbkhn/authorization-zta/internal/signals/caep"
-	"github.com/pmsbkhn/authorization-zta/internal/testsupport/mock"
+	"github.com/pmsbkhn/zta-core/authz/authzen"
+	"github.com/pmsbkhn/zta-core/authz/pdpclient"
+	"github.com/pmsbkhn/zta-core/authz/pep"
+	"github.com/pmsbkhn/zta-core/authz/token"
+	"github.com/pmsbkhn/zta-core/signals/caep"
+	"github.com/pmsbkhn/zta-core/testsupport/mock"
 )
 
 // WalletConfig configures the VSP Wallet workload + its East-West PEP.

@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/pmsbkhn/authorization-zta/examples/vsp/app"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/api"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/grpcpdp"
-	"github.com/pmsbkhn/authorization-zta/internal/services"
-	authzenv1 "github.com/pmsbkhn/authorization-zta/proto/authzen/v1"
+	"github.com/pmsbkhn/zta-core/authz/api"
+	"github.com/pmsbkhn/zta-core/authz/grpcpdp"
+	"github.com/pmsbkhn/zta-core/services"
+	authzenv1 "github.com/pmsbkhn/zta-core/proto/authzen/v1"
 	"google.golang.org/grpc"
 )
 

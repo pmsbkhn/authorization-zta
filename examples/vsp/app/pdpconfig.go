@@ -2,7 +2,7 @@ package app
 
 import (
 	vsppolicies "github.com/pmsbkhn/authorization-zta/examples/vsp/policies"
-	"github.com/pmsbkhn/authorization-zta/internal/services"
+	"github.com/pmsbkhn/zta-core/services"
 )
 
 // DemoPDPConfig returns a platform PDPConfig wired with the VSP reference domain

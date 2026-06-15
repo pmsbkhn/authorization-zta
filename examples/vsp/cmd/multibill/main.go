@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/pmsbkhn/authorization-zta/examples/vsp/app"
-	"github.com/pmsbkhn/authorization-zta/internal/services"
+	"github.com/pmsbkhn/zta-core/services"
 )
 
 func main() {
