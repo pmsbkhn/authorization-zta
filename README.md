@@ -342,38 +342,52 @@ opa test policies/ -v # Fitness functions Rego (9 ca)
 
 ## Cấu trúc
 
+> **Nền tảng vs Demo:** repo tách rõ **lõi nền tảng ZTA** (authorization tại 3 chặng — tái sử dụng) khỏi
+> **reference adopter VSP** (Gateway/Multi-Bill/Wallet — chỉ là demo, nằm dưới `examples/vsp/`). Chi
+> tiết kiến trúc: [`docs/architecture/`](docs/architecture/).
+
 ```
+# ── LÕI NỀN TẢNG (tái sử dụng) ────────────────────────────────────────────────
 cmd/
-  pdp/               # Control Plane PDP (AuthZEN HTTP facade + OPA + gRPC)
-  gateway/           # Edge PEP / API Gateway (profile=edge)
-  multibill/         # Multi-Bill workload (delegation + bubble-up; mTLS client)
-  wallet/            # VSP Wallet workload + East-West PEP (profile=east_west; mTLS server)
-  svidmint/          # cấp CA + SVID ra disk (stand-in nhẹ cho SPIRE — dùng ở demo dev)
-  nodecert/          # sinh PKI production: upstream root + node CA + agent node cert (x509pop)
+  pdp/               # PDP generic (framework embed + S3 bundle pull) — adopter cấp domain riêng
+  caepemit/          # ops tool: đẩy CAEP SET (thu hồi/khôi phục session)
+  bundlepush/        # ops tool: publish OPA bundle lên policy store bất biến (WORM)
 internal/
-  authzen/           # VSP Standard Contract (types) + validation naming-convention
-  api/               # AuthZEN 1.0 HTTP facade
-  pdp/               # Unified Router: orchestration ra quyết định
-  engine/            # OPA nhúng (compile + eval) → engine.Decision
-  token/             # decision_token (HS256, có TTL, ràng buộc tuple)
-  pep/               # PEP library: L0/L1/L2 ladder + bubble-up (edge→401, east_west→403)
-  pdpclient/         # HTTP client AuthZEN cho PEP
-  spiffe/            # SPIFFE CA in-process + mint X509-SVID + rotation + Source + mTLS (go-spiffe)
-  grpcpdp/           # gRPC PDP server (bọc pdp.Service) + client (implement pep.PDP)
-  services/          # wiring từng process thành http.Handler (cmd mỏng + E2E test)
-  pip/               # interface IdP / SPIRE / PolicyStore (Policy Information Points)
-  mock/              # mock của các PIP
-proto/authzen/v1/    # Protobuf/gRPC AuthZEN contract + generated *.pb.go
-deploy/              # SPIRE thật: Dockerfile + compose.yaml + spire/ config + run.sh
-policies/            # OPA bundle (embed vào binary)
+  authz/             # LÕI AUTHORIZATION (3 chặng)
+    authzen/         #   VSP Standard Contract (types) + validation naming-convention
+    api/             #   AuthZEN 1.0 HTTP facade
+    pdp/             #   Unified Router + port pdp.Engine
+    engine/          #   OPA nhúng (compile + eval) → engine.Decision
+    rebac/           #   ReBAC/OpenFGA engine (drop-in pdp.Engine)
+    token/           #   decision_token (HS256, TTL, ràng tuple+digest)
+    pep/             #   PEP library: L0/L1/L2 ladder + bubble-up (edge→401, east_west→403)
+    pdpclient/       #   HTTP client AuthZEN cho PEP
+    grpcpdp/         #   gRPC PDP server + client (impl pep.PDP)
+  identity/spiffe/   # WORKLOAD AUTHENTICATION: CA/mint SVID/rotation/Source/mTLS (go-spiffe) — module lân cận
+  signals/caep/      # CONTINUOUS EVALUATION: SET (RFC 8417) + RevocationCache — module lân cận
+  policystore/bundlestore/  # adapter S3 (MinIO) cho policy bundle
+  ports/pip/         # SPI: IdP / WorkloadAttestor / PolicyStore (Policy Information Points)
+  services/          # platform wiring tái dùng: PDPService/Handler, mTLS (mtls.go), gRPC (grpc.go)
+  testsupport/       # mock/ (fake các PIP) + policyfixture/ (synthetic domain cho test lõi)
+policies/            # KHUNG policy nền tảng (embed) — KHÔNG có domain nghiệp vụ
   main.rego          #   vsp.authz — entrypoint/router, fail-closed
-  global/            #   vsp.global — validate schema naming-convention
-  lib/               #   vsp.lib — AAL ordering, obligation builders, required_attributes (data-driven)
-  profiles/          #   vsp.profiles — invariant theo chặng (edge/east_west/partner)
-  domain/            #   vsp.domain.{wallet,bill} — logic nghiệp vụ
-  data.json          #   required_attributes (§5.2) — thêm service = sửa JSON, không chạm code
-  authz_test.rego    #   fitness functions
+  global/ lib/ profiles/   # vsp.global / vsp.lib / vsp.profiles
+  data.json          #   required_attributes rỗng (adopter cấp domain data)
+proto/authzen/v1/    # Protobuf/gRPC AuthZEN contract + generated *.pb.go
+
+# ── REFERENCE ADOPTER (demo, KHÔNG thuộc lõi) ─────────────────────────────────
+examples/vsp/
+  cmd/{pdp,gateway,multibill,wallet,svidmint,nodecert}/   # workload + tool demo
+  app/               # wiring demo (Gateway/Multibill/Wallet) + DemoPDPConfig + E2E tests
+  policies/          # vsp.domain.{wallet,bill} + data.json + authz_test.rego (domain nghiệp vụ)
+  deploy/            # SPIRE thật: Dockerfile + compose.yaml + spire/ + run.sh + vault/ + k8s/ + rebac/
+  scripts/demo.sh    # demo in-process (svidmint + 4 service, mTLS East-West)
 ```
+
+> Lõi nạp domain của adopter qua `services.PDPConfig.ExtraModules`/`ExtraData` (in-process) hoặc một
+> compiled bundle từ S3 (production). Demo dùng `examples/vsp/app.DemoPDPConfig` để ghép
+> `examples/vsp/policies` lên khung. Lõi hiện vẫn nằm trong `internal/` (chưa import được từ module
+> khác) — bước đưa ra `pkg/`/module riêng là việc tiếp theo nếu muốn nhúng như thư viện ngoài.
 
 ### Nguyên tắc thiết kế đã áp dụng
 

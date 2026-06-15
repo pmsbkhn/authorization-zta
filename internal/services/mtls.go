@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pmsbkhn/authorization-zta/internal/spiffe"
+	"github.com/pmsbkhn/authorization-zta/internal/identity/spiffe"
 	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 )

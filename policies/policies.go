@@ -15,11 +15,15 @@ import (
 	"strings"
 )
 
-// Embeds the root-level entrypoint (main.rego), every policy subpackage, and the
-// data document. The `*.rego` glob also pulls in *_test.rego at the root, which
-// Modules() filters out so fitness functions never reach the runtime bundle.
+// Embeds the framework policy only: the entrypoint/router (main.rego) and the
+// reusable subpackages vsp.global (schema), vsp.lib (helpers), vsp.profiles
+// (per-hop invariants), plus the base data document. Business domain policy
+// (vsp.domain.<x>) is NOT embedded here — an adopter supplies it via
+// services.PDPConfig.ExtraModules or a compiled bundle (the reference VSP domain
+// lives under examples/vsp/policies). The `*.rego` glob also pulls in *_test.rego
+// at the root, which Modules() filters out.
 //
-//go:embed *.rego global profiles domain lib data.json
+//go:embed *.rego global profiles lib data.json
 var bundle embed.FS
 
 // Modules returns every embedded .rego file keyed by its bundle-relative path

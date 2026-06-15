@@ -3,8 +3,8 @@ package services
 import (
 	"fmt"
 
-	"github.com/pmsbkhn/authorization-zta/internal/grpcpdp"
-	"github.com/pmsbkhn/authorization-zta/internal/pep"
+	"github.com/pmsbkhn/authorization-zta/internal/authz/grpcpdp"
+	"github.com/pmsbkhn/authorization-zta/internal/authz/pep"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )

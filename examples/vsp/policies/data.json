@@ -1,0 +1,6 @@
+{
+  "required_attributes": {
+    "wallet:settle": ["amount", "currency"],
+    "bill:pay": ["amount", "currency"]
+  }
+}
