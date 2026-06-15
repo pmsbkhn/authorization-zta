@@ -1,6 +1,11 @@
-// Command pdp runs the VSP Control Plane: the decision core (embedded OPA)
-// exposed over the AuthZEN HTTP facade and, optionally, a gRPC endpoint for the
-// efficient internal data path (design-v3 §6.1).
+// Command pdp runs the VSP *reference* Control Plane PDP: the platform decision
+// core (internal/services) with the VSP domain policy (examples/vsp/policies)
+// layered onto the embedded framework via PDPConfig.ExtraModules. It mirrors the
+// generic platform PDP (cmd/pdp) but ships the demo's wallet/bill rules so the
+// example stack authorizes end to end without an external bundle store.
+//
+// A real adopter would instead run the generic cmd/pdp and supply its own domain
+// policy (its own ExtraModules, or a compiled bundle pulled from S3).
 package main
 
 import (
@@ -12,9 +17,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/pmsbkhn/authorization-zta/examples/vsp/app"
 	"github.com/pmsbkhn/authorization-zta/internal/authz/api"
 	"github.com/pmsbkhn/authorization-zta/internal/authz/grpcpdp"
-	"github.com/pmsbkhn/authorization-zta/internal/policystore/bundlestore"
 	"github.com/pmsbkhn/authorization-zta/internal/services"
 	authzenv1 "github.com/pmsbkhn/authorization-zta/proto/authzen/v1"
 	"google.golang.org/grpc"
@@ -29,30 +34,9 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
-	cfg := services.PDPConfig{
-		TokenSecret: tokenSecret(),
-		TokenTTL:    tokenTTL(),
-		Logger:      log,
-	}
-	// GitOps pull path: load the compiled bundle from the immutable S3 store.
-	if ep := os.Getenv("S3_ENDPOINT"); ep != "" {
-		store, err := bundlestore.New(bundlestore.Config{
-			Endpoint:  ep,
-			AccessKey: envOr("S3_ACCESS_KEY", "minioadmin"),
-			SecretKey: envOr("S3_SECRET_KEY", "minioadmin"),
-			Bucket:    envOr("S3_BUCKET", "vsp-policy-bundles"),
-			Object:    envOr("S3_OBJECT", "bundle.tar.gz"),
-		})
-		if err != nil {
-			return err
-		}
-		data, version, err := store.LatestBundle(context.Background())
-		if err != nil {
-			return err
-		}
-		cfg.Bundle = data
-		log.Info("loaded policy bundle from S3", "bytes", len(data), "version", version)
-	}
+	cfg := app.DemoPDPConfig(tokenSecret())
+	cfg.TokenTTL = tokenTTL()
+	cfg.Logger = log
 
 	svc, err := services.PDPService(context.Background(), cfg)
 	if err != nil {

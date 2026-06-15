@@ -16,8 +16,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/pmsbkhn/authorization-zta/internal/caep"
 	"github.com/pmsbkhn/authorization-zta/internal/services"
+	"github.com/pmsbkhn/authorization-zta/internal/signals/caep"
 )
 
 func main() {
