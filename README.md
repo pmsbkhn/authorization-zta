@@ -254,6 +254,26 @@ deploy/k8s/run-k8s.sh        # k3d create → deploy SPIRE → verify k8s_psat a
 
 ---
 
+## Milestone 14 — ReBAC (OpenFGA) sau pdp.Engine (§6.3) (đã hoàn thành)
+
+Engine **quan hệ kiểu Zanzibar** (OpenFGA) thỏa **cùng `pdp.Engine`** như OPA, nên PDP có thể route tới nó hoặc compose với OPA mà không đổi facade/PEP.
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| ReBAC engine (`internal/rebac`) | gọi OpenFGA `/check`; map `subject→user`, `action verb→can_<verb>`, `resource→object` | ✅ |
+| Drop-in `pdp.Engine` | `var _ pdp.Engine = (*rebac.Engine)(nil)` — cắm thẳng vào `pdp.New(engine, issuer)` | ✅ |
+| Mô hình quan hệ | `account` với `owner`/`can_settle`; tuple `user:u-1 owner account:acc-1` | ✅ |
+| Verify live | owner → allow (`rebac_relationship_ok`), stranger → deny — **thuần quan hệ** | ✅ |
+
+```bash
+deploy/rebac/run-rebac.sh    # OpenFGA → model + tuple → live engine test
+# Reset: docker rm -f vsp-openfga
+```
+
+> **Trạng thái cuối:** lõi quyết định/enforcement, mTLS+SVID toàn mesh, SPIRE production (x509pop + k8s_psat + Vault upstream), gRPC, decision token, CAEP, PolicyStore S3 bất biến, và ReBAC — **đều thật**. Còn lại thuần production-hardening: IdP enrich thật, node attestor đám mây khác (`aws_iid`…), HA/secret management.
+
+---
+
 ## Yêu cầu
 
 - **Go** ≥ 1.22 (dùng method-based routing của `net/http.ServeMux`). Đã test với 1.26.
