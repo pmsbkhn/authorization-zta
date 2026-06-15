@@ -76,6 +76,8 @@ github.com/open-policy-agent/opa v1.17.1/go.mod h1:lcuZYSlqQpXFzsA6EJCELmfR5+nNO
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/pmsbkhn/zta-core v0.1.0 h1:pCUNGFvCfkK9FqjFIEZpV2gr/ytjWzJFTzPVPF/nKyI=
+github.com/pmsbkhn/zta-core v0.1.0/go.mod h1:UcB/lV08jBfjXJ/pqOXG2gzbOeYpkHTTFPo2uSdkH0g=
 github.com/prometheus/client_golang v1.23.2 h1:Je96obch5RDVy3FDMndoUsjAhG5Edi49h0RJWRi/o0o=
 github.com/prometheus/client_golang v1.23.2/go.mod h1:Tb1a6LWHB3/SPIzCoaDXI4I8UHKeFTEQ1YCr+0Gyqmg=
 github.com/prometheus/client_model v0.6.2 h1:oBsgwpGs7iVziMvrGhE53c/GrLUsZdHnqNwqPLxwZyk=

@@ -3,7 +3,7 @@ module github.com/pmsbkhn/authorization-zta
 go 1.26.4
 
 require (
-	github.com/pmsbkhn/zta-core v0.0.0
+	github.com/pmsbkhn/zta-core v0.1.0
 	github.com/spiffe/go-spiffe/v2 v2.7.0
 	google.golang.org/grpc v1.81.1
 )
@@ -45,8 +45,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-// Local development: the reference adopter builds against the core in the
-// sibling working tree. When zta-core is published, drop this replace and pin a
-// released version (e.g. require github.com/pmsbkhn/zta-core vX.Y.Z).
-replace github.com/pmsbkhn/zta-core => ../zta-core
