@@ -1,0 +1,170 @@
+# SPIRE on Kubernetes with the cloud-native node attestor k8s_psat: agents prove
+# node identity with a projected ServiceAccount token, which the server validates
+# via the Kubernetes TokenReview API. This is the production attestor for k8s
+# (no join token, no node cert) — the cloud-native counterpart of M8's x509pop.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spire
+---
+# --- SPIRE server identity + RBAC (validate projected tokens) ----------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-server
+  namespace: spire
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spire-server
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spire-server
+subjects:
+  - kind: ServiceAccount
+    name: spire-server
+    namespace: spire
+roleRef:
+  kind: ClusterRole
+  name: spire-server
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-agent
+  namespace: spire
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-server
+  namespace: spire
+data:
+  server.conf: |
+    server {
+      bind_address = "0.0.0.0"
+      bind_port = "8081"
+      trust_domain = "vsp.local"
+      data_dir = "/run/spire/data"
+      log_level = "INFO"
+      ca_ttl = "24h"
+      default_x509_svid_ttl = "1h"
+    }
+    plugins {
+      DataStore "sql" {
+        plugin_data { database_type = "sqlite3" connection_string = "/run/spire/data/datastore.sqlite3" }
+      }
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          clusters = {
+            "vsp-cluster" = {
+              service_account_allow_list = ["spire:spire-agent"]
+            }
+          }
+        }
+      }
+      KeyManager "memory" { plugin_data {} }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent
+  namespace: spire
+data:
+  agent.conf: |
+    agent {
+      data_dir = "/run/spire"
+      log_level = "INFO"
+      server_address = "spire-server"
+      server_port = "8081"
+      socket_path = "/run/spire/sockets/agent.sock"
+      trust_domain = "vsp.local"
+      insecure_bootstrap = true
+    }
+    plugins {
+      NodeAttestor "k8s_psat" {
+        plugin_data { cluster = "vsp-cluster" token_path = "/var/run/secrets/tokens/spire-agent" }
+      }
+      KeyManager "memory" { plugin_data {} }
+      WorkloadAttestor "unix" { plugin_data {} }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-server
+  namespace: spire
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: spire-server } }
+  template:
+    metadata: { labels: { app: spire-server } }
+    spec:
+      serviceAccountName: spire-server
+      containers:
+        - name: spire-server
+          image: ghcr.io/spiffe/spire-server:1.15.1
+          args: ["-config", "/run/spire/config/server.conf"]
+          ports: [{ containerPort: 8081 }]
+          volumeMounts:
+            - { name: config, mountPath: /run/spire/config, readOnly: true }
+            - { name: data, mountPath: /run/spire/data }
+          readinessProbe:
+            exec: { command: ["/opt/spire/bin/spire-server", "healthcheck"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - { name: config, configMap: { name: spire-server } }
+        - { name: data, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-server
+  namespace: spire
+spec:
+  selector: { app: spire-server }
+  ports: [{ port: 8081, targetPort: 8081 }]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+  namespace: spire
+spec:
+  selector: { matchLabels: { app: spire-agent } }
+  template:
+    metadata: { labels: { app: spire-agent } }
+    spec:
+      serviceAccountName: spire-agent
+      hostPID: true
+      containers:
+        - name: spire-agent
+          image: ghcr.io/spiffe/spire-agent:1.15.1
+          args: ["-config", "/run/spire/config/agent.conf"]
+          volumeMounts:
+            - { name: config, mountPath: /run/spire/config, readOnly: true }
+            - { name: agent-token, mountPath: /var/run/secrets/tokens }
+            - { name: sockets, mountPath: /run/spire/sockets }
+      volumes:
+        - { name: config, configMap: { name: spire-agent } }
+        - { name: sockets, emptyDir: {} }
+        - name: agent-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: spire-agent
+                  expirationSeconds: 7200
+                  audience: spire-server

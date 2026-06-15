@@ -236,6 +236,24 @@ deploy/vault/run-vault.sh    # vault → init PKI → SPIRE(vault upstream) → 
 
 ---
 
+## Milestone 13 — Cloud-native node attestor k8s_psat (k3d) (đã hoàn thành)
+
+Triển khai SPIRE trên **Kubernetes thật** (k3d) với node attestor **`k8s_psat`**: agent chứng minh danh tính node bằng **projected ServiceAccount token**, server validate qua **Kubernetes TokenReview API**. Đây là attestor production cho k8s (không token/cert thủ công) — đối ứng đám mây của x509pop.
+
+| Hạng mục | Chi tiết | Trạng thái |
+|---|---|---|
+| Cluster | `k3d` (k8s 1.35-in-docker) | ✅ |
+| Manifests (`deploy/k8s/spire.yaml`) | SPIRE server (Deployment + RBAC TokenReview) + agent (DaemonSet, projected token) | ✅ |
+| Node attestation | agent id `spiffe://vsp.local/spire/agent/k8s_psat/vsp-cluster/<uid>`, `reattestable=true` | ✅ |
+| Verify live | server log `node_attestor_type=k8s_psat … attestation request completed`; agent `Node attestation was successful` | ✅ |
+
+```bash
+deploy/k8s/run-k8s.sh        # k3d create → deploy SPIRE → verify k8s_psat attestation
+# Reset: k3d cluster delete vsp
+```
+
+---
+
 ## Yêu cầu
 
 - **Go** ≥ 1.22 (dùng method-based routing của `net/http.ServeMux`). Đã test với 1.26.
@@ -356,8 +374,9 @@ policies/            # OPA bundle (embed vào binary)
 - [x] ~~**Protobuf/gRPC contract**~~ — `AccessEvaluation.Evaluate`, client drop-in cho PEP (M6).
 - [x] ~~**SPIRE daemon thật**~~ — spire-server/agent qua docker-compose, SVID qua Workload API (M7).
 - [x] ~~**Node attestor production + UpstreamAuthority**~~ — x509pop + UpstreamAuthority disk + keys bền (M8).
-- [ ] **Cloud-native attestor** (`k8s_psat`/`aws_iid`) + UpstreamAuthority Vault/AWS-PCA cho triển khai thật.
-- [ ] **gRPC qua mTLS end-to-end**: PEP dùng `grpcpdp.Client` + creds SVID thay HTTP `pdpclient`.
+- [x] ~~**Cloud-native attestor `k8s_psat`**~~ — SPIRE trên k3d, projected SA token + TokenReview (M13).
+- [x] ~~**UpstreamAuthority Vault**~~ — Vault PKI ký intermediate (M12).
+- [x] ~~**gRPC qua mTLS end-to-end**~~ — PEP→PDP gRPC/mTLS (M9).
 - [ ] Wire mock PIP còn lại vào hot path (IdP enrich subject; revocation/posture qua attestor).
 - [ ] **GitOps + immutable S3 bundle store** thật, PDP/PEP pull bundle (§5.3) — thay cho embed.
 - [x] ~~**CAEP push thu hồi session/posture**~~ — SET transmitter/receiver + PEP deny tức thì (M11).
