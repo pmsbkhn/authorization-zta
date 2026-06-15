@@ -8,7 +8,8 @@
 
 Hệ thống **Authorization dùng chung** theo chuẩn **Zero Trust Architecture (ZTA)** cho VSP System — facade **OpenID AuthZEN 1.0** đặt trước một **PDP** nhúng **OPA** (Open Policy Agent).
 
-Thiết kế chi tiết: [`docs/design-v3.md`](docs/design-v3.md).
+Thiết kế chi tiết + mô tả kiến trúc (ISO 42010) nay ở repo lõi:
+[zta-core/docs](https://github.com/pmsbkhn/zta-core/tree/main/docs).
 
 ---
 
@@ -350,7 +351,7 @@ opa test policies/ -v # Fitness functions Rego (9 ca)
 
 > **Nền tảng vs Demo:** repo tách rõ **lõi nền tảng ZTA** (authorization tại 3 chặng — tái sử dụng) khỏi
 > **reference adopter VSP** (Gateway/Multi-Bill/Wallet — chỉ là demo, nằm dưới `examples/vsp/`). Chi
-> tiết kiến trúc: [`docs/architecture/`](docs/architecture/).
+> tiết kiến trúc: [zta-core/docs/architecture](https://github.com/pmsbkhn/zta-core/tree/main/docs/architecture).
 
 ```
 # ── LÕI NỀN TẢNG (tái sử dụng) ────────────────────────────────────────────────
