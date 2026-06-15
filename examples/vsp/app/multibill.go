@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pmsbkhn/authorization-zta/internal/authz/pep"
+	"github.com/pmsbkhn/zta-core/authz/pep"
 )
 
 // MultibillConfig configures the Multi-Bill workload.

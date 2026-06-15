@@ -11,9 +11,9 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/pmsbkhn/authorization-zta/internal/authz/authzen"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/pdpclient"
-	"github.com/pmsbkhn/authorization-zta/internal/authz/pep"
+	"github.com/pmsbkhn/zta-core/authz/authzen"
+	"github.com/pmsbkhn/zta-core/authz/pdpclient"
+	"github.com/pmsbkhn/zta-core/authz/pep"
 )
 
 // GatewayConfig configures the Edge PEP / API Gateway.

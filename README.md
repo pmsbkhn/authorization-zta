@@ -1,5 +1,11 @@
 # authorization-zta
 
+> **⚠️ Lõi nền tảng đã tách sang repo riêng [`zta-core`](https://github.com/pmsbkhn/zta-core)
+> (`github.com/pmsbkhn/zta-core`).** Repo này nay là **reference adopter VSP** — demo đầu cuối minh họa
+> cách một hệ thống áp dụng nền tảng (xem [`examples/vsp/`](examples/vsp)). Toàn bộ lõi
+> (PEP/PDP/engine/identity/...) sống ở `zta-core`. Repo này consume lõi qua
+> `require github.com/pmsbkhn/zta-core v0.1.0`. Mô tả cũ bên dưới phản ánh layout trước khi tách.
+
 Hệ thống **Authorization dùng chung** theo chuẩn **Zero Trust Architecture (ZTA)** cho VSP System — facade **OpenID AuthZEN 1.0** đặt trước một **PDP** nhúng **OPA** (Open Policy Agent).
 
 Thiết kế chi tiết: [`docs/design-v3.md`](docs/design-v3.md).

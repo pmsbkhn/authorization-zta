@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/pmsbkhn/authorization-zta/examples/vsp/app"
-	"github.com/pmsbkhn/authorization-zta/internal/identity/spiffe"
-	"github.com/pmsbkhn/authorization-zta/internal/services"
+	"github.com/pmsbkhn/zta-core/identity/spiffe"
+	"github.com/pmsbkhn/zta-core/services"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 )

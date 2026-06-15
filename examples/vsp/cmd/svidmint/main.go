@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pmsbkhn/authorization-zta/internal/identity/spiffe"
+	"github.com/pmsbkhn/zta-core/identity/spiffe"
 )
 
 func main() {
